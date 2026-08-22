@@ -9,7 +9,7 @@ stack.
 
 Blog: (Vercel URL, update once deployed)
 
-License: [MIT](LICENSE), © Surajit Chaudhuri.
+License: [Proprietary](LICENSE), © Surajit Chaudhuri.
 
 ---
 
