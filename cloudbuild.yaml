@@ -1,19 +1,205 @@
+# GitHub-triggered CI/CD for the two Cloud Run services. Runtime secrets are
+# referenced by name and never enter the image or this repository.
+substitutions:
+  _REGION: asia-south1
+  _REPOSITORY: sreshtha
+  _API_SERVICE: sreshtha-api
+  _WEB_SERVICE: sreshtha-web
+  _RUNTIME_SERVICE_ACCOUNT: sreshtha-run@${PROJECT_ID}.iam.gserviceaccount.com
+  _CLOUDSQL_INSTANCE: ${PROJECT_ID}:asia-south1:sreshtha-db
+  _CONTRACT_BUCKET: ${PROJECT_ID}-sreshtha-contracts
+
 steps:
-  - name: gcr.io/cloud-builders/docker
+  # Lint and format checks (backend + frontend) before running tests.
+  - id: backend-lint
+    name: python:3.11
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        pip install --no-cache-dir ruff black
+        ruff check .
+        black --check .
+
+  - id: frontend-lint
+    name: node:18
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        cd frontend
+        npm ci
+        npm run lint
+
+  # CI: fail before publishing/deploying if backend tests fail.
+  - id: backend-tests
+    name: python:3.11
+    entrypoint: bash
+    # Pull runtime secrets from Secret Manager into the test environment.
+    secretEnv:
+      - DATABASE_URL
+      - JWT_SECRET
+      - OPENAI_API_KEY
+      - SARVAM_API_KEY
+    args:
+      - -ceu
+      - |
+        pip install --no-cache-dir '.[dev]'
+        pytest
+
+  # Quick frontend sanity: install locked deps and do a production build + tsc check.
+  - id: frontend-ci
+    name: node:18
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        cd frontend
+        npm ci
+        npm run build
+
+  # Docker builds also run the production frontend build and TypeScript check.
+  - id: build-api
+    name: gcr.io/cloud-builders/docker
     args:
       - build
       - -f
       - Dockerfile.cloudrun
       - -t
-      - asia-south1-docker.pkg.dev/$PROJECT_ID/sreshtha/app:$_TAG
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/api:$SHORT_SHA
       - .
-  - name: gcr.io/cloud-builders/docker
+
+  - id: build-web
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/web:$SHORT_SHA
+      - ./frontend
+
+  - id: push-api
+    name: gcr.io/cloud-builders/docker
     args:
       - push
-      - asia-south1-docker.pkg.dev/$PROJECT_ID/sreshtha/app:$_TAG
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/api:$SHORT_SHA
+
+  - id: push-web
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/web:$SHORT_SHA
+  # Create a new API revision without routing traffic, then promote it atomically.
+  - id: deploy-api-create
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        gcloud run deploy ${_API_SERVICE} \
+          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/api:$SHORT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --service-account=${_RUNTIME_SERVICE_ACCOUNT} \
+          --add-cloudsql-instances=${_CLOUDSQL_INSTANCE} \
+          --set-env-vars=APP_ENV=production,LLM_PROVIDER=openai,CONTRACT_STORAGE_ROOT=gs://${_CONTRACT_BUCKET} \
+          --set-secrets=DATABASE_URL=database-url:latest,JWT_SECRET=jwt-secret:latest,OPENAI_API_KEY=openai-api-key:latest,SARVAM_API_KEY=sarvam-api-key:latest \
+          --min-instances=0 \
+          --max-instances=1 \
+          --concurrency=2 \
+          --cpu=1 \
+          --memory=1Gi \
+          --timeout=300 \
+          --execution-environment=gen2 \
+          --no-traffic
+
+  - id: deploy-api-promote
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        NEW_REV=$$(gcloud run revisions list --service=${_API_SERVICE} --region=${_REGION} --format='value(metadata.name)' --limit=1 --sort-by=~metadata.creationTimestamp)
+        echo "waiting for revision $$NEW_REV to be Ready"
+        # Poll the revision Ready condition for up to 60 attempts (~5 minutes)
+        for i in $$(seq 1 60); do
+          STATUS=$$(gcloud run revisions describe $$NEW_REV --region=${_REGION} --format='value(status.conditions[?(@.type=="Ready")].status)') || STATUS=Unknown
+          echo "status=$$STATUS"
+          if [ "$$STATUS" = "True" ]; then
+            echo "revision $$NEW_REV is Ready"
+            break
+          fi
+          sleep 5
+        done
+        if [ "$$STATUS" != "True" ]; then
+          echo "revision $$NEW_REV did not become Ready in time" >&2
+          gcloud run revisions describe $$NEW_REV --region=${_REGION} --verbosity=debug || true
+          exit 1
+        fi
+        gcloud run services update-traffic ${_API_SERVICE} --to-revisions=$${NEW_REV}=100 --region=${_REGION}
+
+  # Read the API URL and create a new web revision without routing traffic,
+  # then promote it to receive all traffic (atomic switch).
+  - id: deploy-web-create
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        API_URL="$$(gcloud run services describe ${_API_SERVICE} --region=${_REGION} --format='value(status.url)')"
+        gcloud run deploy ${_WEB_SERVICE} \
+          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/web:$SHORT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --port=80 \
+          --set-env-vars="API_UPSTREAM=$$API_URL" \
+          --min-instances=0 \
+          --max-instances=1 \
+          --no-traffic
+
+  - id: deploy-web-promote
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        NEW_REV=$$(gcloud run revisions list --service=${_WEB_SERVICE} --region=${_REGION} --format='value(metadata.name)' --limit=1 --sort-by=~metadata.creationTimestamp)
+        echo "waiting for web revision $$NEW_REV to be Ready"
+        for i in $$(seq 1 60); do
+          STATUS=$$(gcloud run revisions describe $$NEW_REV --region=${_REGION} --format='value(status.conditions[?(@.type=="Ready")].status)') || STATUS=Unknown
+          echo "status=$$STATUS"
+          if [ "$$STATUS" = "True" ]; then
+            echo "web revision $$NEW_REV is Ready"
+            break
+          fi
+          sleep 5
+        done
+        if [ "$$STATUS" != "True" ]; then
+          echo "web revision $$NEW_REV did not become Ready in time" >&2
+          gcloud run revisions describe $$NEW_REV --region=${_REGION} --verbosity=debug || true
+          exit 1
+        fi
+        gcloud run services update-traffic ${_WEB_SERVICE} --to-revisions=$${NEW_REV}=100 --region=${_REGION}
+
 images:
-  - asia-south1-docker.pkg.dev/$PROJECT_ID/sreshtha/app:$_TAG
-substitutions:
-  _TAG: v1
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/api:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/web:$SHORT_SHA
+
 options:
+  # Triggers enable this automatically; retaining it here also makes a manual
+  # `gcloud builds submit` resolve the PROJECT_ID references above.
+  dynamicSubstitutions: true
   logging: CLOUD_LOGGING_ONLY
+
+# Make secrets available to build steps via Secret Manager. Do NOT hardcode
+# secret values in the YAML or images; Cloud Run will mount secrets at runtime
+# where possible and the deploy step references secrets by name.
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/database-url/versions/latest
+      env: DATABASE_URL
+    - versionName: projects/$PROJECT_ID/secrets/jwt-secret/versions/latest
+      env: JWT_SECRET
+    - versionName: projects/$PROJECT_ID/secrets/openai-api-key/versions/latest
+      env: OPENAI_API_KEY
+    - versionName: projects/$PROJECT_ID/secrets/sarvam-api-key/versions/latest
+      env: SARVAM_API_KEY
