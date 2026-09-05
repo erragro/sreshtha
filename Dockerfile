@@ -4,7 +4,8 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr tesseract-ocr-hin tesseract-ocr-ben tesseract-ocr-tam \
@@ -12,8 +13,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
  && rm -rf /var/lib/apt/lists/*
 
+# Install torch (~200MB CPU wheel) in its own layer. Doing this before the
+# main pip resolve keeps the peak-memory spike per RUN below Docker Desktop's
+# 8GB default; a single monolithic pip install of easyocr + scikit-image +
+# scipy + torch has OOM'd historically (SIGKILL / exit 137).
+RUN pip install --upgrade pip \
+ && pip install --no-compile torch --index-url https://download.pytorch.org/whl/cpu
+
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install .
+RUN pip install --no-compile .
 
 COPY app ./app
 COPY alembic ./alembic

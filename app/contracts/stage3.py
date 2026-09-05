@@ -219,6 +219,7 @@ def synthesise(
     ]
 
     rendered_all: list[dict[str, Any]] = []
+    failed_chunk_indices: list[int] = []
     with ThreadPoolExecutor(max_workers=_STAGE3_MAX_WORKERS) as pool:
         futures = {
             pool.submit(
@@ -241,6 +242,7 @@ def synthesise(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("stage 3 chunk %d failed: %s", idx, exc)
                 results_by_idx[idx] = []
+                failed_chunk_indices.append(idx)
 
     # Reassemble in original clause order.
     for idx in range(len(chunks)):
@@ -257,7 +259,8 @@ def synthesise(
 
     # Backfill missing clauses.
     seen = {r["clause_id"] for r in rendered_all}
-    for cid in expected_ids - seen:
+    missing_clause_ids = expected_ids - seen
+    for cid in missing_clause_ids:
         rendered_all.append({
             "clause_id": cid,
             "explanation": "This clause could not be re-rendered.",
@@ -273,7 +276,27 @@ def synthesise(
         source_counts[s] = source_counts.get(s, 0) + 1
     logger.info("stage 3 source breakdown: %s", source_counts)
 
-    return {"overview": overview, "rendered": rendered_all, "error": None}
+    error = _chunk_failure_error(failed_chunk_indices, missing_clause_ids)
+    if error:
+        logger.error("stage 3 completed with failed chunks: %s", error)
+    return {"overview": overview, "rendered": rendered_all, "error": error}
+
+
+def _chunk_failure_error(
+    failed_chunk_indices: list[int], missing_clause_ids: set[str],
+) -> str | None:
+    """Turn an unrendered Stage 3 chunk into a retryable pipeline failure.
+
+    The fallback text is useful only when an individual clause passed through
+    the validator's safe fallback. A whole worker/LLM chunk failing is an
+    infrastructure failure, and must never be presented as a completed read.
+    """
+    if not failed_chunk_indices:
+        return None
+    return (
+        f"Stage 3 could not render {len(missing_clause_ids)} clause(s) "
+        "because a rendering batch failed. Please retry."
+    )
 
 
 # ---------------------------------------------------------------------------

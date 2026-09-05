@@ -12,7 +12,13 @@ export function AppShell() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background">
       <MainSidebar />
-      <main className="flex min-w-0 flex-1 overflow-hidden">
+      {/*
+        Regular worker pages, especially the clause-by-clause Contract Reader,
+        can exceed one viewport. Keep chat's own inner transcript scroller,
+        but make the shell's content pane vertically scrollable for every
+        other route instead of clipping it at the viewport boundary.
+      */}
+      <main className="flex min-h-0 min-w-0 flex-1 overflow-y-auto">
         <Outlet />
       </main>
     </div>

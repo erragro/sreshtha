@@ -18,10 +18,13 @@ export default defineConfig({
     proxy: {
       // Send API calls to the FastAPI backend running locally on 8000 so we
       // can develop the SPA against a real backend without CORS gymnastics.
-      "/auth": "http://localhost:8000",
-      "/api": "http://localhost:8000",
-      "/ping": "http://localhost:8000",
-      "/run": "http://localhost:8000",
+      // Use the explicit IPv4 loopback address. Docker may occupy the IPv6
+      // localhost:8000 listener with a stale container, which otherwise lets
+      // the frontend talk to a different backend than the source-tree API.
+      "/auth": "http://127.0.0.1:8000",
+      "/api": "http://127.0.0.1:8000",
+      "/ping": "http://127.0.0.1:8000",
+      "/run": "http://127.0.0.1:8000",
     },
   },
 })

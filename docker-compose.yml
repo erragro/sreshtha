@@ -43,7 +43,10 @@ services:
     depends_on:
       - app
     ports:
-      - "5173:80"
+      # Frontend published on :5173 by default. If port 5173 is occupied
+      # (e.g. `vite dev` from another repo), override via .env:
+      #   FRONTEND_PORT=5175 docker compose up -d
+      - "${FRONTEND_PORT:-5173}:80"
 
 volumes:
   pgdata:
