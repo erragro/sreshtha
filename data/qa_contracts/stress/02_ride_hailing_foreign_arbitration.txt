@@ -1,0 +1,67 @@
+DRIVER-PARTNER SERVICES AGREEMENT
+
+BETWEEN:
+GlobalRide Technologies India Pvt. Ltd., a company incorporated in India with its registered office at Cyber City, Sector 24, Gurugram 122002, Haryana (hereinafter "GlobalRide")
+
+AND:
+The undersigned driver-partner (hereinafter "Driver-Partner")
+
+WHEREAS the Driver-Partner wishes to use GlobalRide's mobile application to receive requests for transportation services and connect with customers, the parties agree as follows:
+
+CLAUSE 1 — SERVICES AND STATUS
+
+1.1 GlobalRide operates a technology platform that connects passengers with independent transportation providers. GlobalRide does NOT provide transportation services itself.
+
+1.2 The Driver-Partner is an independent contractor. Nothing in this agreement creates any employment, agency, franchise, or joint-venture relationship.
+
+1.3 The Driver-Partner accepts trip requests through the app in the Driver-Partner's sole discretion.
+
+CLAUSE 2 — VEHICLE, LICENSE, AND INSURANCE
+
+2.1 The Driver-Partner shall arrange and maintain, at their own cost, valid commercial motor insurance covering the vehicle used in providing services, in accordance with the Motor Vehicles Act, 1988.
+
+2.2 The Driver-Partner shall obtain and maintain, at their own cost, all licenses, permits, and registrations required by law, including a Public Service Vehicle (PSV) driving license.
+
+2.3 GlobalRide does not provide health insurance, term insurance, accident cover, or any other insurance to the Driver-Partner.
+
+CLAUSE 3 — FARE AND FEES
+
+3.1 GlobalRide sets the fare structure applicable to all rides on the platform. The estimated fare shown to the passenger at trip request may vary from the actual fare based on route, tolls, and cancellations.
+
+3.2 GlobalRide charges a Service Fee of up to thirty-five percent (35%) of each fare as commission for use of the platform.
+
+3.3 Payments to the Driver-Partner are made weekly to a nominated bank account, after deduction of Service Fee, GST, and any adjustments.
+
+CLAUSE 4 — DEACTIVATION
+
+4.1 GlobalRide may, at its sole discretion, suspend or deactivate the Driver-Partner's account at any time, without notice, for any reason including customer ratings below the threshold set by GlobalRide.
+
+4.2 A deactivated Driver-Partner has no right to a hearing, appeal, or reinstatement.
+
+CLAUSE 5 — LIABILITY LIMITATION
+
+5.1 GlobalRide's aggregate liability under this agreement, in any twelve-month period, shall not exceed the greater of five hundred euros (EUR 500) or fees earned by the Driver-Partner from GlobalRide in the preceding month.
+
+5.2 GlobalRide shall NOT be liable for any injury, loss, damage, or claim suffered by the Driver-Partner, any passenger, or any third party during the provision of transportation services.
+
+5.3 The Driver-Partner shall indemnify GlobalRide against any and all claims, including personal injury claims by passengers or third parties.
+
+CLAUSE 6 — GOVERNING LAW AND DISPUTE RESOLUTION
+
+6.1 This agreement shall be governed by the laws of the Netherlands.
+
+6.2 Any dispute shall be resolved exclusively by binding arbitration seated in Amsterdam, the Netherlands, in the English language, under the ICC Rules of Arbitration by a sole arbitrator appointed by GlobalRide.
+
+6.3 The Driver-Partner waives any right to participate in a class, collective, or representative proceeding.
+
+CLAUSE 7 — DATA
+
+7.1 The Driver-Partner consents to the collection, processing, and cross-border transfer of personal data, trip data, location data, and payment data to GlobalRide's global affiliates.
+
+CLAUSE 8 — TERM AND TERMINATION
+
+8.1 This agreement takes effect on acceptance and continues until terminated by either party.
+
+8.2 Either party may terminate this agreement at any time without notice or cause.
+
+By clicking "Accept" in the GlobalRide Driver app, the Driver-Partner acknowledges that they have read, understood, and agreed to be bound by this agreement.

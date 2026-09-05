@@ -29,24 +29,26 @@ import type { ContractStatus, ContractSummary, TargetLanguage, TargetScript, Tra
 const MAX_MB = 10
 const ACCEPTED = ".pdf,.jpg,.jpeg,.png"
 
-// Order is intentional: Hindi first (broadest reach for Indian gig
-// workers), then Bengali (migrant workforce across cities the PRD calls
-// out), then Tamil, then the rest. English last — it's a fallback for
-// this audience, not the default.
+// v0.1 Contract Reader scope: Hindi + Bengali only. The two languages
+// with the largest gig-worker footprint per the PRD's persona coverage
+// (Rahul in Bangalore delivery, Sabina in Bengaluru domestic work).
+// English kept as a reviewer fallback. Tamil/Telugu/Kannada/Marathi
+// re-enable once idiom-library coverage + native-speaker review land.
 const LANGUAGE_OPTIONS: { code: TargetLanguage; label: string; nativeLabel: string }[] = [
   { code: "hi", label: "Hindi",   nativeLabel: "हिन्दी" },
   { code: "bn", label: "Bengali", nativeLabel: "বাংলা" },
-  { code: "ta", label: "Tamil",   nativeLabel: "தமிழ்" },
-  { code: "te", label: "Telugu",  nativeLabel: "తెలుగు" },
-  { code: "kn", label: "Kannada", nativeLabel: "ಕನ್ನಡ" },
-  { code: "mr", label: "Marathi", nativeLabel: "मराठी" },
   { code: "en", label: "English", nativeLabel: "English" },
 ]
 
-// Languages whose native scripts have a widely-used Roman/Latin
-// transliteration alternative that many workers actually read more
-// fluently. Only show the script toggle for these.
-const SCRIPT_TOGGLE_LANGUAGES: ReadonlySet<TargetLanguage> = new Set(["hi", "bn", "mr"])
+const SOURCE_LANGUAGE_OPTIONS: { code: TargetLanguage; label: string }[] = [
+  { code: "en", label: "English" },
+  { code: "hi", label: "Hindi" },
+  { code: "bn", label: "Bengali" },
+  { code: "ta", label: "Tamil" },
+  { code: "te", label: "Telugu" },
+  { code: "kn", label: "Kannada" },
+  { code: "mr", label: "Marathi" },
+]
 
 // Sarvam Mayura tone/register modes. Labels + hints match the
 // thought-translate project verbatim so a worker moving between the
@@ -106,14 +108,16 @@ export function ContractReaderPage() {
   // of uploads doesn't force re-picking every time. Defaults to Hindi
   // because it's the widest-reach language in the target audience.
   const [targetLanguage, setTargetLanguage] = useState<TargetLanguage>("hi")
-  // Script toggle: only meaningful for a few Indic languages where Roman
-  // transliteration is common. Server ignores it when target == 'en'.
-  const [targetScript, setTargetScript] = useState<TargetScript>("native")
+  const targetScript: TargetScript = "native"
+  // EasyOCR needs to know which Indic script to load. Platform agreements
+  // are often English, so that is the intentional default rather than an
+  // unverified language guess.
+  const [sourceLanguage, setSourceLanguage] = useState<TargetLanguage>("en")
   // Mayura register/tone. Default 'formal' — pure Hindi/Bengali/etc.
   // Explicit opt-in for Hinglish-style code-mixing.
   const [translationMode, setTranslationMode] = useState<TranslationMode>("formal")
+  const [processingConsent, setProcessingConsent] = useState(false)
 
-  const showScriptToggle = SCRIPT_TOGGLE_LANGUAGES.has(targetLanguage)
   const showModeSelector = targetLanguage !== "en"
 
   const handleFiles = async (files: FileList | File[] | null) => {
@@ -130,13 +134,19 @@ export function ContractReaderPage() {
       toast.error("Please upload a PDF, JPG, or PNG.")
       return
     }
+    if (!processingConsent) {
+      toast.error("Please acknowledge how we process contract text before uploading.")
+      return
+    }
 
     try {
       await upload.mutateAsync({
         file,
         targetLanguage,
-        targetScript: showScriptToggle ? targetScript : "native",
+        targetScript,
+        sourceLanguage,
         translationMode: showModeSelector ? translationMode : "formal",
+        processingConsent,
       })
       toast.success(`Uploaded ${file.name}`)
     } catch (err) {
@@ -214,39 +224,19 @@ export function ContractReaderPage() {
             ))}
           </select>
 
-          {showScriptToggle && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">
-                Script:
-              </span>
-              <div className="inline-flex overflow-hidden rounded-md border">
-                <button
-                  type="button"
-                  onClick={() => setTargetScript("native")}
-                  className={cn(
-                    "px-3 py-1.5 text-xs font-medium transition-colors",
-                    targetScript === "native"
-                      ? "bg-brand-600 text-white"
-                      : "bg-background hover:bg-muted",
-                  )}
-                >
-                  Native
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTargetScript("roman")}
-                  className={cn(
-                    "border-l px-3 py-1.5 text-xs font-medium transition-colors",
-                    targetScript === "roman"
-                      ? "bg-brand-600 text-white"
-                      : "bg-background hover:bg-muted",
-                  )}
-                >
-                  Roman
-                </button>
-              </div>
-            </div>
-          )}
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Contract language
+            <select
+              value={sourceLanguage}
+              onChange={(e) => setSourceLanguage(e.target.value as TargetLanguage)}
+              aria-label="Contract language"
+              className="h-9 rounded-md border bg-background px-2 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+            >
+              {SOURCE_LANGUAGE_OPTIONS.map((opt) => (
+                <option key={opt.code} value={opt.code}>{opt.label}</option>
+              ))}
+            </select>
+          </label>
 
           {showModeSelector && (
             <div className="flex w-full flex-col gap-1.5 border-t pt-3">
@@ -284,6 +274,20 @@ export function ContractReaderPage() {
           )}
         </CardContent>
       </Card>
+
+      <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-md border p-3 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={processingConsent}
+          onChange={(e) => setProcessingConsent(e.target.checked)}
+          className="mt-0.5 size-4 accent-brand-600"
+        />
+        <span>
+          I understand that Sreshtha will send extracted contract text and
+          derived clauses to OpenAI, Google Vertex AI, and Sarvam to create
+          this reading. I should remove personal details I do not want shared.
+        </span>
+      </label>
 
       {/* Upload zone */}
       <div
@@ -424,8 +428,9 @@ export function ContractReaderPage() {
       </div>
 
       <div className="mt-12 border-t pt-6 text-xs text-muted-foreground">
-        We read what you upload; we don't send it anywhere. Files are stored
-        against your account only.
+        We extract text on our server, then send the extracted text and derived
+        clauses to OpenAI, Google Vertex AI, and Sarvam to prepare this reading
+        and translation. Your original file remains private to your account.
       </div>
     </div>
   )

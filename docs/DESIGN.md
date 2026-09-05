@@ -1,328 +1,231 @@
-# QuickBites Support Bot — Design
+# Sreshtha — Technical Design
 
-## 0. Deployment
+**Status:** working build; public-launch hardening remains
+**Updated:** 2026-09-05
 
-- **Live service:** https://quickbites-bot-162392320588.asia-south1.run.app
-  (Cloud Run, region `asia-south1`, single instance, bundled Postgres on
-  tmpfs, ~10s cold start, max 1 instance, 60-min request timeout).
-- **Source:** https://github.com/erragro/quickbites-bot
-- **Endpoints:** `GET /ping`, `POST /run/dev` (rehearsal 101–105),
-  `POST /run/prod`, `GET /sessions/{id}`, `GET /score`.
+Sreshtha is a mobile-first platform for Indian gig workers. It explains
+uploaded contracts, publishes rights information, and matches workers to
+welfare schemes. This document is the technical reference for the current
+repository; product policy and acceptance criteria are in [PRD.md](PRD.md).
 
-## 1. Architecture
+## 1. System architecture
 
-### Why a synchronous handler
-
-The simulator blocks on `POST /reply` — it expects the bot to return the
-next message and action list inline. Building this on Celery + a queue
-would add latency, infrastructure, and one moving part for every turn,
-without changing the protocol's blocking shape. So one FastAPI handler
-runs everything per turn:
-
-```
-                            ┌─────────────────────────┐
-        ───── customer ────▶│ FastAPI /reply (sync)   │
-        simulator           │ blocks until reply ready│
-                            └────────────┬────────────┘
-                                         │
-   ╔══════════════════════════════════════════════════════════════╗
-   ║                  Cardinal pipeline (Python)                  ║
-   ║──────────────────────────────────────────────────────────────║
-   ║  Phase 1 │ Validator    │ shape, injection markers, abuse    ║
-   ║  Phase 2 │ Deduplicator │ SHA-256(session+msg), 10m TTL      ║
-   ║          │              │ • hit  → replay, persist, return   ║
-   ║          │              │ • miss → continue                  ║
-   ║  Phase 3 │ Handler      │ load/create session row + history  ║
-   ║  Phase 4 │ Enricher     │ Postgres pre-fetch:                ║
-   ║          │              │   order+items, customer+abuse,     ║
-   ║          │              │   rider+history, restaurant+reviews║
-   ║  Phase 5 │ Dispatcher   │ escalation_group + execution_id    ║
-   ╠══════════════════════════════════════════════════════════════╣
-   ║                LLM pipeline (provider-agnostic)              ║
-   ║──────────────────────────────────────────────────────────────║
-   ║  Stage 0 │ Classify   │ FAST  │ JSON: intent, mentioned_id,  ║
-   ║          │            │       │   sentiment, injection?      ║
-   ║  Stage 1 │ Evaluate   │ SMART │ structured: proposed actions ║
-   ║          │            │       │   + reasoning + confidence   ║
-   ║  Stage 2 │ Validate   │ NONE  │ deterministic enforcement    ║
-   ║          │            │       │   (matrix + 14 hard rules)   ║
-   ║  Stage 3 │ Respond    │ SMART │ JSON: bot_message            ║
-   ╚══════════════════════════════════════════════════════════════╝
-                                         │
-                                         ▼
-   simulator ◀──── POST /reply (bot_message + actions[]) ─────────
+```text
+React 19 + Vite client
+        |
+        | authenticated JSON / multipart API
+        v
+FastAPI application
+        |-- auth, module access, and administration
+        |-- Contract Reader, Rights Guide, Schemes Finder
+        |-- chat/session substrate (Sahaayak retargeting in progress)
+        |
+        +------------------------------+
+        |                              |
+        v                              v
+PostgreSQL 16 + pgvector         Contract object storage
+Alembic migrations               local disk or Google Cloud Storage
+        |
+        v
+AI providers, after recorded consent
+  OpenAI: contract extraction and research
+  Vertex AI: worker-facing English rendition
+  Sarvam Mayura: Indic-language translation
 ```
 
-Each row in the diagram is one function call inside the handler — no
-queue, no worker, no async. The two-pipeline split is the load-bearing
-design choice: **everything that can be deterministic is**, the LLM only
-runs where natural-language judgment is unavoidable, and **Stage 2 owns
-the grading-relevant decisions** in plain Python.
-
-### Why the deterministic Stage 2
-
-The grader scores on six criteria — refund amount, refund cap, complaint
-target, abuse handling, escalation correctness, clean close. Five of those
-six are about *which actions get emitted*, which is a decision the LLM
-shouldn't be allowed to make alone:
-
-- LLMs drift on numbers turn-to-turn (cold-food at 30% one turn, 50% the
-  next when the customer pushes back).
-- LLMs cave to social pressure ("just process the refund NOW") on
-  scenarios where the right answer is to refuse.
-- LLMs are unreliable about emitting paired actions (refund + complaint)
-  when the prompt only emphasises one.
-
-So Stage 1 *proposes*, Stage 2 *enforces*: the matrix decides amounts and
-partner complaints, abuse rules decide who gets refused, escalation rules
-decide who gets routed to a human. Stage 1's contribution is intent
-inference, reasoning trace, and a confidence score. Stage 2 is a few
-hundred lines of Python with 60 unit tests.
-
-### Why provider-agnostic
-
-`app/l2_agents/llm_provider.py` exposes one `chat(role, system, user, …)`
-contract where `role ∈ {"fast", "smart"}`. Two implementations ship:
-
-- **AnthropicProvider** — `claude-haiku-4-5` (fast), `claude-sonnet-4-6`
-  (smart). Default in production.
-- **GeminiGatewayProvider** — `gemini-2.5-flash-lite` (fast),
-  `gemini-2.5-flash` (smart). Used during early iteration on free quota.
-
-Switching is one env var. Stages 0–3 don't know which model they're
-talking to.
-
-## 2. Data
-
-`app.db` (the bundled SQLite seed) is loaded into Postgres at startup by
-`app/migrations/bootstrap.py` (idempotent — skips if rows exist). Schema
-is a straight copy of the 9 starter tables plus three runtime tables we
-own: `sessions`, `turns`, `bot_executions`. `DATA_TODAY = 2026-04-13` is
-pinned globally per the simulator's `schema.md`; every "last 30 days"
-calculation uses it, so the bot's view of the world matches the snapshot
-the simulator was built against.
-
-In the Cloud Run image Postgres runs in the same container with `PGDATA`
-on `/tmp` (tmpfs). On every cold start the bootstrap re-runs and the
-runtime tables are empty. This is fine: the bot's *reference data* is
-read-only and re-derivable, and *session data* is short-lived per eval
-run (the simulator persists transcripts on its side anyway).
-
-## 3. Policy
-
-### Refund matrix (`app/policies/refund_matrix.py`)
-
-The deterministic core: `(intent, order, customer) → (refund%, method,
-complaint_target)`.
-
-| Intent | Base | Method | Partner complaint |
-|---|---|---|---|
-| `missing_item` | 50% | wallet_credit | restaurant |
-| `wrong_order` | 100% | wallet_credit | restaurant |
-| `cold_food` | 30% | wallet_credit | restaurant |
-| `never_arrived` | 100% | wallet_credit | rider |
-| `rider_late` | 10% | wallet_credit | rider |
-| `rider_rude` / `rider_demanded_tip` | — | — | rider |
-| `double_charge` | — | — | app |
-| `promo_failed` | 10% | wallet_credit | app |
-
-A tier multiplier scales the base amount: gold +0.15, customers with
->100 orders +0.10, flagged abusers −0.30, clamped to `[0.5, 1.3]`. Stage
-2 rewrites Stage 1's amount and method to the matrix value for
-matrix-actionable intents on clean customers. The LLM is not trusted to
-derive the number from prose — it drifts.
-
-### Abuse signals (`app/policies/abuse_rules.py`)
-
-`is_likely_abuser` fires on **any** of:
-
-- `account_age_days < 30` AND `total_complaints >= 2` — brand-new account
-  already complaining.
-- `complaint_rate > 0.5` AND `rejected_complaint_rate > 0.5` — historical
-  pattern of rejected claims.
-- `refunds_30d_total_inr > 2000` AND (`rejected_complaint_rate > 0` OR
-  `refunds_30d_count >= 4`) — money-flooded *with* a corroborating signal.
-
-The corroboration on the third rule was added after the prod run (see
-§5). Bare high spend with zero rejection history was tripping the
-heuristic on legitimate gold-tier customers and producing false abuse
-flags on real complaints.
-
-### Stage 2 enforcement (the deterministic layer)
-
-Inside Stage 2, Stage 1's proposal flows through 14 enforcement steps in
-order. Each step either *adds*, *strips*, or *rewrites* an action; later
-steps see what earlier steps left behind.
-
-```
-   Stage 1 proposal: actions[], reasoning, confidence
-            │
-            ▼
-   ┌───────────────────────────────────────────────────────────────┐
-   │  CLOSE-marker shortcut  ── customer typed "CLOSE: ..."        │
-   │                            → return [close], done             │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Cap each refund ≤ order.total_inr                            │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Intent force-routes                                          │
-   │    double_charge       → drop refund, force app complaint     │
-   │    promo_failed (<24h) → wallet credit (10%) + app complaint  │
-   │    cancel_request      → clear all actions (→ app flow)       │
-   │    human_request       → T1 with no order: strip escalate     │
-   │                          T2+ with human keyword: escalate     │
-   │    rider_demanded_tip  → drop refund, force rider complaint   │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Abuser + never_arrived  → strip refund, escalate, flag       │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Abuser + cold_food/missing_item                              │
-   │     → token credit (≤₹300) + escalate + flag                  │
-   │       (rubric prefers small credit + escalate over refusal)   │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Prompt injection                                             │
-   │     → strip refunds for non-refundable intents                │
-   │     → always emit flag_abuse                                  │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Verbal abuse / chargeback threat → escalate calmly           │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Awaiting order_id (T1, matrix-actionable, clean)             │
-   │     → strip premature escalate, stay in prose-ask mode        │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Matrix proposer (clean customer, Stage 1 only escalated)     │
-   │     → swap in refund + partner complaint from matrix          │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Matrix amount override                                       │
-   │     → rewrite Stage 1's refund amount to matrix value         │
-   │     → add matrix's partner complaint if Stage 1 missed it     │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Cross-turn dedupe                                            │
-   │     → drop file_complaint / issue_refund already emitted      │
-   │       earlier in this session                                 │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Post-injection pivot (prior turn fired flag_abuse)           │
-   │     non-abuser → escalate + flag                              │
-   │     abuser     → strip money + escalate, keep only flag       │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Confidence < 0.6  OR  refund > ₹1500 (and not gold+clean)    │
-   │     → downgrade to escalate                                   │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Already-escalated collapse                                   │
-   │     → if no new resolution, replace re-escalate with close    │
-   ├───────────────────────────────────────────────────────────────┤
-   │  Safety net                                                   │
-   │     empty actions  → close   (or escalate+flag if abuser)     │
-   └───────────────────────────────────────────────────────────────┘
-            │
-            ▼
-   final actions[]  →  Stage 3 (prose), persist, simulator
-```
-
-Each step is one or two `if`-blocks in `app/l2_agents/stage2_validator.py`,
-covered by `tests/test_stage2_validator.py` (60 unit tests, runs offline).
-
-### Stage 3 responder (prompt-level rules)
-
-- Never reveal bot / policy / internal scores verbatim.
-- Never volunteer money the customer didn't ask for.
-- Short, human-sounding, 1–3 sentences.
-- **CLOSE HARD RULE:** when `close` is in `validated_actions`, no follow-up
-  questions, no "let me know if...", no open-ended invitations. Wish
-  them well and end.
-- **Don't repeat the prior bot message** — `prior_bot_message` is in
-  context; the new reply must reference details from the current
-  customer message (order number, item, amount).
-
-## 4. Evals
-
-### Prod run (graded)
-
-One pass through all 22 graded scenarios on Anthropic Sonnet 4.6 + Haiku
-4.5. The simulator's `/v1/candidate/summary` is the authoritative score.
-
-| Metric | Value |
+| Path | Responsibility |
 |---|---|
-| Scenarios completed | 22 / 22 |
-| **Aggregate score** | **1960 / 2200 = 89.1%** |
-| Perfect-score scenarios | 14 / 22 |
-| Strict-mode pass rates | |
-| &nbsp;&nbsp;`refund_correct` | 18 / 19 |
-| &nbsp;&nbsp;`within_policy_cap` | 19 / 19 |
-| &nbsp;&nbsp;`complaint_handling` | 16 / 19 |
-| &nbsp;&nbsp;`abuse_handling` | 18 / 19 |
-| &nbsp;&nbsp;`escalation_correct` | 15 / 19 |
-| &nbsp;&nbsp;`closed_cleanly` | 19 / 19 |
-| Partial-credit scenarios | 8: 100, 9: 60, 18: 30 |
+| `app/` | FastAPI routes, services, ORM models, policies, AI integrations |
+| `app/contracts/` | Upload, storage, OCR, processing, analysis, translation |
+| `app/rights/`, `app/schemes/` | Rights Guide and Schemes Finder APIs |
+| `app/translate/idioms.py` | Idiom-preserving translation layer |
+| `app/l1_cardinal/`, `app/l2_agents/` | Chat substrate being retargeted for Sahaayak |
+| `frontend/` | React, TypeScript, Vite, Tailwind worker/admin interfaces |
+| `alembic/versions/` | Database and content migrations `001` through `016` |
+| `scripts/` | Tenant bootstrap, corpus ingestion, translation helpers |
 
-`abuse_handling` 18/19 and `closed_cleanly` 19/19 are the architectural
-payoff: every iron rule (refund cap, double-charge routing, abuser+never-
-arrived refusal, injection stripping, CLOSE-marker short-circuit) is a
-deterministic Python branch that fires every time, regardless of what
-the customer types or how the LLM phrases its proposal.
+## 2. Core platform — built
 
-### Per-scenario post-mortem (8 failures)
+- **Backend:** FastAPI registers authentication, session/chat, contracts,
+  rights, schemes, idiom-admin, module-access, and administration routers.
+- **Frontend:** React 19 + TypeScript + Vite 8 + Tailwind v4. Routes are
+  protected by authentication and module-access guards.
+- **Data:** PostgreSQL 16 with `pgvector`, SQLAlchemy 2, and Alembic.
+- **Auth:** email/password signup/login, bcrypt, JWT bearer tokens, rate
+  limiting, and a production guard against the default JWT secret.
+- **Access control:** module-level grants, super-admin functions, and tenant /
+  tenant-membership schema for partner deployments.
 
-After the run, every failing scenario's transcript was pulled from the
-persisted `turns` table and root-caused:
+## 3. Contract Reader — built
 
-| Sc | Score | Failure | Root cause |
-|---|---|---|---|
-| 2  | 85 | `complaint_handling` | Stage 1 proposed refund only; matrix rewrote the amount but didn't add the restaurant complaint. |
-| 3  | 30 | refund/complaint/abuse/escalation | Aryan (gold, ₹2138 in 3 events, no rejections) was wrongly flagged abuser by `refund_flooded`. Bot escalated+flagged a legitimate complaint. |
-| 9  | 60 | partial — refuse+escalate matched 0.6 | Abuser raising plausible cold-food complaint. We refused entirely; rubric rewards small credit + escalate (1.0). |
-| 12 | 85 | `complaint_handling` | Same shape as Sc 2 — refund issued, rider complaint dropped. |
-| 18 | 30 | partial — full refund matched 0.3 | Abuser claimed never-arrived against "low-quality" rider; existing refusal rule required clean rider, so we caved to pressure and refunded ₹1325. |
-| 19 | 90 | `escalation_correct` | Abuser + injection pivot. We escalated; rubric wants quiet refusal + flag (escalation is over-routing for known abusers). |
-| 20 | 90 | `escalation_correct` | "Put me through to a manager" on T1. We escalated immediately; rubric wants a triage attempt first. |
-| 21 | 90 | `escalation_correct` | Customer said "can you escalate it that way" (a routing request). The regex caught "escalate" as a human-keyword. |
+Contract Reader is the most complete worker-facing module. Its APIs are
+authenticated and every record is user-scoped.
 
-### Post-mortem fixes shipped (live, but not re-graded)
+### 3.1 Processing flow
 
-Seven deterministic Stage 2 fixes target the failures above. They are
-committed, tested, and live on the Cloud Run URL. They could not be
-re-evaluated because the prod simulator's 22-scenario quota was already
-consumed by the original run.
+```text
+PDF / JPEG / PNG upload
+  -> validate size, declared type, and file signature
+  -> save original + create uploaded_contracts record
+  -> require recorded processing consent
+  -> extract embedded PDF text or run local OCR
+  -> Stage 1: metadata, contract type, and clauses
+  -> Stage 2: operational risk and statute-aware annotations
+  -> Stage 3: plain-language English explanation and actions
+  -> Sarvam translation for selected worker-output language
+  -> persist progressive output and mark ready
+```
 
-| Fix | Mechanism | Targets | Expected delta |
-|---|---|---|---|
-| F | Matrix amount-override now also adds the matrix's partner complaint when Stage 1 emitted refund-only. | Sc 2, 12 | +30 |
-| G | `refund_flooded` requires a corroborating signal (rejection history *or* 4+ events). Bare high spend no longer flags. | Sc 3 | +70 |
-| H | Abuser + cold_food/missing_item with order → token credit (≤₹300) + escalate + flag, instead of pure refusal. | Sc 9 | +40 |
-| I | Abuser + never_arrived strips refund regardless of rider profile. The "low-quality rider" loophole is closed. | Sc 18 | +70 |
-| J | Post-injection-pivot for abusers refuses silently (strip money + escalate, keep only flag). | Sc 19 | +10 |
-| K | Drop bare `escalat\w*` from the human-request keyword regex; "escalate it that way" no longer matches. | Sc 21 | +10 |
-| L | T1 `human_request` with no order strips Stage 1's escalate to force a triage turn. | Sc 20 | +10 |
+| Area | Implementation |
+|---|---|
+| File handling | PDF, JPEG, PNG; configured 10 MB ceiling; MIME signature checks; source-language hint |
+| Storage | `LocalStorage` for development; `GCSStorage` when the configured root is `gs://...` |
+| OCR | PyMuPDF embedded-text extraction before EasyOCR fallback; PDF/raster resource limits |
+| Stage 1 | OpenAI `gpt-4o-mini` structured extraction of clauses and metadata |
+| Stage 2 | OpenAI `gpt-4o` and pgvector retrieval of curated statutes; jurisdiction guard removes mismatched state-law citations |
+| Stage 3 | Vertex AI Gemini English rendition, clause-rule library, deterministic validator, safe fallback |
+| Translation | Sarvam Mayura chunked translation; per-row English fallback if translation fails |
+| Idioms | Aho-Corasick substitution before Mayura and vetted restoration after; accepts `[[IDM_n]]` and `[IDM_n]` markers |
+| Status | `uploaded -> ocr_pending -> ocr_done -> processing -> ready`, plus `failed` |
 
-Theoretical ceiling after fixes: 100% (2200/2200). Realistic estimate
-after accounting for unforeseen interactions: **95–98%**, but the locked
-prod number is 89.1% and that's the score on record.
+### 3.2 Contract APIs
 
-## 5. Limitations
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `POST` | `/api/contracts` | Upload with source/target language, tone, and consent |
+| `GET` | `/api/contracts` | List the current user's uploads |
+| `GET` | `/api/contracts/{id}` | Read processing status and stage output |
+| `POST` | `/api/contracts/{id}/process` | Start/retry processing; reserves work to prevent duplicates |
+| `GET` | `/api/contracts/{id}/download` | Download original without exposing its storage key |
+| `DELETE` | `/api/contracts/{id}` | Delete the caller's stored original and record |
 
-- **The 89.1% is locked.** The prod run consumed the simulator's
-  22-scenario quota before the post-mortem fixes shipped. The current
-  deployed code would score higher; we have no way to prove that against
-  the official grader.
-- **Localisation.** Responses are English-only; real Indian
-  food-delivery customers type Hindi/English mixed code. The smart-tier
-  model handles that fine on input, but the policy text and stage
-  prompts are English, so output stays English.
-- **Single-instance Cloud Run.** Bundled Postgres on tmpfs forces
-  `max-instances=1`. For real production traffic, the right answer is
-  Cloud SQL + multi-instance — straightforward to wire, but unnecessary
-  for this eval workload.
-- **Replay UX.** All 8 failures were diagnosed by `psql`-ing the
-  persisted `turns` table; that worked in ~10 minutes. A diff UI against
-  the simulator's `/transcript` endpoint would speed up future iteration
-  but isn't a current bottleneck.
+### 3.3 Consent and data flow
 
-## 6. Tools used
+- The original file remains in application-controlled storage.
+- `processing_consent` must be recorded before analysis can start.
+- After consent, extracted text and derived clauses go to configured OpenAI,
+  Vertex AI, and Sarvam services as required by each pipeline stage.
+- The upload UI states this processing plainly; consent is not inferred from
+  upload alone.
 
-- Claude Code as the coding assistant.
-- Runtime LLMs (provider-agnostic — flip `LLM_PROVIDER`):
-  - **In production:** Anthropic SDK. `claude-haiku-4-5` for Stage 0,
-    `claude-sonnet-4-6` for Stages 1 and 3.
-  - During iteration: Gemini Gateway (free tier).
-    `gemini-2.5-flash-lite` for Stage 0, `gemini-2.5-flash` for Stages 1
-    and 3.
-- No third-party LLM framework (no LangChain / LlamaIndex / DSPy).
-  Direct HTTP / SDK calls only.
-- 60 unit tests across the deterministic layers (`pytest tests/`).
+## 4. Content and worker modules — built
+
+### Rights Guide
+
+The API and frontend render statute-cited fact cards. Current canonical topics
+are minimum wage, injury at work, grievance escalation, e-Shram registration,
+and contract fairness. Content and translations are separate records, which
+supports explicit English fallback where a reviewed translation is unavailable.
+
+### Schemes Finder
+
+Scheme matching is deterministic rather than LLM-driven. A worker profile
+(state, occupation, demographics, and related details) is evaluated against
+structured eligibility rules. The UI displays matches, supporting documents,
+application links, and translated detail where available.
+
+### Idiom library and administration
+
+`idiom_library` and `idiom_translations` store vetted equivalents. The runtime
+builds a cached Aho-Corasick matcher for linear-time scans. Admin UI/API
+manages entries, translations, and cache invalidation. Other super-admin
+surfaces manage users, module access, and conversation content.
+
+### Retrieval and clause rules
+
+- `embeddings` stores chunked statute material as 1024-dimension vectors.
+- `app/retrieval/` chunks, embeds, and retrieves statute material for Stage 2.
+- `clause_rules` holds constraints for common contract patterns. Stage 3
+  classifies, generates under constraints, validates, retries once, then uses
+  a safe fallback when necessary.
+
+## 5. Frontend — built
+
+| Route | Status |
+|---|---|
+| `/contracts`, `/contracts/:contractId` | Upload/list/detail, consent, source/output language controls, citations, overview, translation state, original download |
+| `/rights`, `/rights/:topicKey` | Rights Guide list/detail |
+| `/schemes`, `/schemes/:key` | Scheme matcher/detail |
+| `/chat` | Existing chat shell; Sahaayak retargeting remains incomplete |
+| `/admin`, `/admin/conversation`, `/admin/idioms` | Super-admin interfaces |
+
+Contract Reader's public output selector is intentionally limited to Hindi,
+Bengali, and English. Although the schema accepts other Indic languages, the
+PRD does not make them a Contract Reader v1 public commitment.
+
+## 6. Data model
+
+| Migrations | Additions |
+|---|---|
+| `001-004` | Runtime/session schema, users, module access, conversation studio |
+| `005-008` | Content models, contract language/script, idiom library, translation mode |
+| `009-011` | Rights Guide, Schemes Finder, Complaint Helper content models/seeds |
+| `012` | Tenants and tenant memberships |
+| `013-015` | pgvector retrieval, clause-rule schema, seeded clause rules |
+| `016` | `uploaded_contracts.processing_consent` |
+
+Contract records include ownership, storage key, MIME type, source and target
+language, translation mode, consent, OCR text, status, and staged JSON output.
+
+## 7. Local development and deployment
+
+- Python `>=3.11` (current local setup uses Python 3.13).
+- Node.js 20+ for the frontend.
+- Docker Compose provides PostgreSQL/pgvector; Alembic applies schema and
+  content migrations; Uvicorn serves the API; Vite serves the UI.
+- `Dockerfile.cloudrun` and `cloudbuild.yaml` build/publish a Cloud Run image.
+- `cloudrun-entrypoint.sh` supports external `DATABASE_URL` for persistent
+  PostgreSQL; `GCSStorage` supports a contract bucket.
+
+Detailed setup commands and environment variables are in [README.md](../README.md).
+
+## 8. Verification
+
+Recent local validation completed:
+
+- 182 backend tests passed in the full pytest suite.
+- Vite production build completed successfully.
+- A 20-page PDF completed the full Contract Reader pipeline in English,
+  Hindi, Bengali, and Tamil test modes, with no provider errors or leaked
+  idiom marker.
+
+The Vite build emits a non-failing advisory for a JavaScript chunk larger than
+the default 500 kB threshold.
+
+## 9. Planned work
+
+| Area | Planned work |
+|---|---|
+| Worker localisation | Persisted worker locale, reviewed Hindi/Bengali/English UI catalogs, localized backend-error mapping, explicit content fallback |
+| Contract Reader UX | Mobile-first refactor, richer progress display, Rights Guide links from `topic_hint` |
+| Content quality | Native-speaker and labour-law review gates for cards, translations, and clause rules |
+| Complaint Helper | Service, API, frontend, copy/share/PDF workflow over existing templates |
+| Authentication | OTP-first onboarding, recovery PIN, optional email, vault export |
+| Deployment | Cloud Run, managed PostgreSQL, GCS, Secret Manager, observability, load testing |
+| Chatbot | Retarget Cardinal as Sahaayak; add worker-document retrieval only with safety/disclosure complete |
+| Voice and offline | Sarvam ASR/TTS with transcript confirmation; offline Rights Guide and contract reading |
+
+Tamil, Telugu, Kannada, and Marathi Contract Reader output stay gated until
+each language has at least 100 vetted idioms and native-speaker-reviewed
+fact-card content.
+
+## 10. Known limitations
+
+- Contract jobs use FastAPI background tasks in the API process, not a durable
+  external worker queue with independent retries and observability.
+- Local file storage is unsuitable for multi-instance production; use GCS and
+  persistent PostgreSQL in deployment.
+- The app shell is not yet globally localized. Page-level language selectors
+  do not replace the planned worker-locale system.
+- Rights and scheme translations require native-speaker review before being
+  represented as production-ready content.
+- Sreshtha provides legal information and document comprehension, not legal
+  representation or legal verdicts.
+
+## 11. Related documents
+
+| Document | Purpose |
+|---|---|
+| [PRD.md](PRD.md) | Product scope, language policy, quality gates, roadmap, non-goals |
+| [TESTING_GUIDE.md](TESTING_GUIDE.md) | Test conventions |
+| [RIGHTS_GUIDE_CONTENT_GUIDELINES.md](RIGHTS_GUIDE_CONTENT_GUIDELINES.md) | Content authoring and review |

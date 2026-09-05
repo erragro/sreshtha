@@ -34,7 +34,16 @@ class LLMProvider(Protocol):
         user: str,
         max_tokens: int = 1024,
         temperature: float = 0.2,
-    ) -> str: ...
+        schema: dict | None = None,
+    ) -> str:
+        """Return the raw response text. When ``schema`` is a JSON Schema
+        dict, the provider engages its native structured-output mode
+        (OpenAI ``response_format={type: json_schema}``; Vertex Gemini
+        ``response_schema``) so the returned string is guaranteed to be
+        JSON conforming to the schema — no code fences, no prose.
+        Callers still json.loads() the string; schema-mode only removes
+        parse failures, it does not decode."""
+        ...
 
     def chat_stream(
         self,
@@ -54,46 +63,36 @@ class LLMProvider(Protocol):
 
 class VertexAIProvider:
     """
-    Calls Gemini through either:
-      - Google AI Studio (bare API key, GEMINI_API_KEY env var) — simplest;
-        chosen automatically when settings.gemini_api_key is set.
-      - Vertex AI (google-genai SDK, vertexai=True) — needs Application
-        Default Credentials (GOOGLE_APPLICATION_CREDENTIALS to a
-        service-account JSON, or `gcloud auth application-default login`)
-        plus GOOGLE_CLOUD_PROJECT with Vertex AI enabled + active billing.
+    Calls Gemini through Vertex AI. Auth is Application Default
+    Credentials — either ``GOOGLE_APPLICATION_CREDENTIALS`` pointing at
+    a service-account JSON, or ``gcloud auth application-default
+    login``. ``GOOGLE_CLOUD_PROJECT`` must have Vertex AI enabled and
+    active billing.
 
-    Class name stays `VertexAIProvider` for import stability; the docstring
-    is the single source of truth on what it actually does.
+    The AI Studio bare-key path (``GEMINI_API_KEY``) has been removed —
+    that path is rate-limited and easy for Google to block. Vertex is
+    the only Google reasoning path in Sreshtha now.
     """
 
     def __init__(
         self,
         *,
-        api_key: str = "",
-        project: str = "",
-        location: str = "",
+        project: str,
+        location: str,
         fast_model: str,
         smart_model: str,
     ):
         from google import genai  # noqa: WPS433
 
-        # Preference: Vertex (project + ADC) whenever a project is set,
-        # because setup_adc.sh implicitly enables Vertex AI on the project,
-        # and Vertex works cleanly with quota + IAM in production. Fall
-        # back to AI Studio (bare API key) only if no project is available.
-        if project:
-            self._client = genai.Client(
-                vertexai=True, project=project, location=location,
-            )
-            self._auth_mode = "vertex"
-        elif api_key:
-            self._client = genai.Client(api_key=api_key)
-            self._auth_mode = "ai_studio"
-        else:
+        if not project:
             raise RuntimeError(
-                "Gemini provider needs either GOOGLE_CLOUD_PROJECT (Vertex + ADC) "
-                "or GEMINI_API_KEY (AI Studio)."
+                "VertexAIProvider needs GOOGLE_CLOUD_PROJECT. Set it in .env "
+                "and complete `gcloud auth application-default login` first."
             )
+        self._client = genai.Client(
+            vertexai=True, project=project, location=location,
+        )
+        self._auth_mode = "vertex"
         self._model_by_role = {"fast": fast_model, "smart": smart_model}
 
     def _resolve(self, role: str) -> str:
@@ -107,6 +106,7 @@ class VertexAIProvider:
         user: str,
         max_tokens: int = 1024,
         temperature: float = 0.2,
+        schema: dict | None = None,
     ) -> str:
         from google.genai import types  # noqa: WPS433
         from google.genai import errors  # noqa: WPS433
@@ -121,12 +121,20 @@ class VertexAIProvider:
         # (thinking is off by default there), flash + pro honour it.
         thinking_off = types.ThinkingConfig(thinking_budget=0)
 
-        config = types.GenerateContentConfig(
+        # Vertex Gemini uses response_schema + response_mime_type to
+        # enforce JSON output — same guarantee as OpenAI Structured
+        # Outputs, different field names. Only engages when caller
+        # passes a schema.
+        config_kwargs = dict(
             system_instruction=system,
             max_output_tokens=max_tokens,
             temperature=temperature,
             thinking_config=thinking_off,
         )
+        if schema is not None:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_schema"] = schema
+        config = types.GenerateContentConfig(**config_kwargs)
 
         max_attempts = 4
         last_exc: Exception | None = None
@@ -341,28 +349,181 @@ class SarvamProvider:
                     yield text
 
 
+class OpenAIProvider:
+    """
+    Calls the OpenAI Chat Completions API (or an OpenAI-compatible base
+    URL). Kept HTTP-level rather than through the ``openai`` SDK so we
+    do not pull another dependency; the surface we use — a POST to
+    ``/chat/completions`` with a Bearer token — is stable across
+    versions.
+
+    Roles map to two configured model ids:
+      "fast"  → settings.openai_fast_model  (Stage 0 classifier, cheap)
+      "smart" → settings.openai_smart_model (Stage 1 evaluator, Stage 3
+                                             responder, Contract Reader
+                                             Stages 1-3)
+    """
+
+    def __init__(self, *, api_key: str, base_url: str,
+                 fast_model: str, smart_model: str):
+        if not api_key:
+            raise RuntimeError("OpenAIProvider needs OPENAI_API_KEY.")
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._model_by_role = {"fast": fast_model, "smart": smart_model}
+
+    def _resolve(self, role: str) -> str:
+        return self._model_by_role.get(role, self._model_by_role["smart"])
+
+    def _post(self, payload: dict) -> httpx.Response:
+        return httpx.post(
+            f"{self._base_url}/chat/completions",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
+
+    def chat(self, *, role: str, system: str, user: str,
+             max_tokens: int = 1024, temperature: float = 0.2,
+             schema: dict | None = None) -> str:
+        model = self._resolve(role)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        # OpenAI Structured Outputs — 100% schema match when the model
+        # supports it (gpt-4o family). Requires strict=True + additional
+        # required-field constraints on the schema itself; callers pre-
+        # bake those. We just wire the plumbing.
+        if schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.get("name", "response"),
+                    "strict": True,
+                    "schema": schema.get("schema", schema),
+                },
+            }
+        max_attempts = 4
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = self._post(payload)
+                # Retry on rate limits and server errors; anything else
+                # raises immediately.
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    raise RuntimeError(
+                        f"openai {resp.status_code}: {resp.text[:300]}"
+                    )
+                resp.raise_for_status()
+                body = resp.json()
+                return body["choices"][0]["message"]["content"] or ""
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < max_attempts:
+                    time.sleep(0.5 * (2 ** (attempt - 1)) + random.uniform(0, 0.2))
+                    continue
+                raise
+        raise last_exc  # unreachable
+
+    def chat_stream(self, *, role: str, system: str, user: str,
+                    max_tokens: int = 1024,
+                    temperature: float = 0.2) -> Iterator[str]:
+        model = self._resolve(role)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+        with httpx.stream(
+            "POST",
+            f"{self._base_url}/chat/completions",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(120.0, connect=10.0),
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
+                if delta:
+                    yield delta
+
+
+def _resolve_selection() -> str:
+    """Which reasoning provider to instantiate.
+
+    OpenAI is the default for local testing. Vertex AI (Gemini) is the
+    explicit backup — set ``LLM_PROVIDER=vertex`` to route through it.
+    ``LLM_PROVIDER=gemini`` is accepted as an alias for ``vertex`` for
+    now to avoid breaking any docs.
+    """
+    choice = (settings.llm_provider or "").strip().lower()
+    if choice in ("vertex", "gemini"):
+        return "vertex"
+    # "" and "openai" both mean OpenAI.
+    return "openai"
+
+
 @lru_cache(maxsize=4)
-def get_provider(language: str = "en") -> LLMProvider:
+def get_provider(language: str = "en", provider: str | None = None) -> LLMProvider:
     """Return the LLM provider for the given language.
 
-    Architecture (as of the Sreshtha pivot, 2026-08-15):
-      - Gemini owns ALL analysis + reasoning + generation across every
-        language. Gemini 2.5 Flash handles Hindi, Bengali, Tamil, Telugu,
-        Kannada, Marathi natively at production quality, and gives us
-        consistent tone control from one prompt.
-      - Sarvam is now dedicated to two separate purposes: Mayura v1 for
-        cross-language translation (see app/translate/sarvam_mayura.py)
-        and their transliteration endpoint for Roman ↔ Devanagari script
-        flipping (form-time toggle before uploading a contract).
-        Neither uses this chat-completions abstraction.
+    Architecture (as of the per-stage hybrid, 2026-09):
+      - Stage 1 (extract) explicitly uses OpenAI ``gpt-4o-mini`` — see
+        ``app/contracts/stage1.py``.
+      - Stage 2 (annotate) explicitly uses OpenAI ``gpt-4o`` + RAG.
+      - Stage 3 (rewrite) explicitly uses Vertex AI Gemini for warmer
+        tone before Mayura translation — see ``app/contracts/stage3.py``.
+      - Cardinal chat pipeline defaults follow ``LLM_PROVIDER`` env var
+        (default OpenAI).
+      - Sarvam Mayura owns Indic translation regardless.
 
-    The `language` argument is kept in the signature for future
-    fine-grained routing (e.g. long-context per language) but currently
-    every call routes to Gemini.
+    Callers can force a specific provider by passing
+    ``provider="openai"`` or ``provider="vertex"``. If ``provider`` is
+    None the ``LLM_PROVIDER`` env selector is honoured.
     """
-    _ = language  # reserved for future language-specific model choices
+    _ = language  # reserved for future per-language routing
+    if provider is None:
+        selection = _resolve_selection()
+    else:
+        p = provider.strip().lower()
+        selection = "vertex" if p in ("vertex", "gemini") else "openai"
+
+    if selection == "openai":
+        logger.info("get_provider: routing to OpenAI")
+        return OpenAIProvider(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            fast_model=settings.openai_fast_model,
+            smart_model=settings.openai_smart_model,
+        )
+    logger.info("get_provider: routing to Vertex AI (%s)", settings.gemini_smart_model)
     return VertexAIProvider(
-        api_key=settings.gemini_api_key,
         project=settings.google_cloud_project,
         location=settings.google_cloud_location,
         fast_model=settings.gemini_fast_model,

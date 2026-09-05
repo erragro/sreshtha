@@ -53,6 +53,41 @@ def test_restore_swaps_placeholder_for_target():
     assert "अच्छी नीयत से" in restored
 
 
+def test_restore_accepts_mayura_single_bracket_placeholder():
+    """Mayura can reduce [[IDM_1]] to [IDM_1] during translation."""
+    _, subs = idioms.substitute("Act in good faith today.", target_language="hi")
+
+    restored = idioms.restore("आपको [IDM_1] काम करना है।", subs)
+
+    assert "[IDM_1]" not in restored
+    assert "अच्छी नीयत से" in restored
+
+
+@pytest.mark.parametrize(
+    ("language", "expected_translation"),
+    [
+        ("hi", "देखा जाए तो"),
+        ("bn", "সব মিলিয়ে দেখলে"),
+        ("ta", "இறுதியில் பார்த்தால்"),
+    ],
+)
+def test_restore_single_bracket_marker_in_supported_indic_languages(
+    language: str, expected_translation: str,
+):
+    """The Mayura marker-normalisation fix works across all supported scripts."""
+    subbed, subs = idioms.substitute(
+        "Payment reconciliation happens at the end of the day.",
+        target_language=language,
+    )
+    assert len(subs) == 1
+
+    mayura_style_output = subbed.replace("[[IDM_1]]", "[IDM_1]")
+    restored = idioms.restore(mayura_style_output, subs)
+
+    assert "IDM_1" not in restored
+    assert expected_translation in restored
+
+
 # ---------------------------------------------------------------------------
 # Case-insensitive matching
 # ---------------------------------------------------------------------------

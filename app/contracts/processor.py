@@ -57,6 +57,18 @@ def process_contract_bg(contract_id: uuid.UUID) -> None:
             process_contract(db, contract_id)
     except Exception:
         logger.exception("contract %s processing failed at top level", contract_id)
+        # The session which raised may have rolled back the state transition.
+        # Open a clean session so polling cannot be left at a permanent
+        # "Reading" state after an unexpected persistence/runtime failure.
+        try:
+            with db_session() as db:
+                contract = db.execute(
+                    select(UploadedContract).where(UploadedContract.id == contract_id)
+                ).scalar_one_or_none()
+                if contract is not None:
+                    _fail(db, contract, "Processing stopped unexpectedly. Please retry.")
+        except Exception:
+            logger.exception("contract %s could not be marked failed", contract_id)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +142,13 @@ def process_contract(db: Session, contract_id: uuid.UUID) -> None:
     contract.stages = stages
     contract.contract_type = stage_1_out.get("contract_type") or "unknown"
     _commit(db)
+    if stage_1_out.get("error") or not stage_1_out.get("clauses"):
+        _fail(
+            db,
+            contract,
+            "We could not identify contract clauses. Upload a clearer, complete copy and try again.",
+        )
+        return
 
     # ---------- Stage 2 (Research — statute + risk) ----------
     try:
@@ -157,6 +176,13 @@ def process_contract(db: Session, contract_id: uuid.UUID) -> None:
     stages = _merge_stages(contract.stages, {"stage_3": stage_3_out})
     contract.stages = stages
     _commit(db)
+    if stage_3_out.get("error") or not stage_3_out.get("rendered"):
+        _fail(
+            db,
+            contract,
+            "We could not prepare a plain-language explanation. Please retry.",
+        )
+        return
 
     # ---------- Translate (Mayura → worker's chosen target language) ----------
     # Skipped when target == 'en' (Stage 3 output is already the target),
@@ -181,12 +207,29 @@ def process_contract(db: Session, contract_id: uuid.UUID) -> None:
                 target_language=target,
                 mode=mode,
             )
+            fallback_clause_ids = [
+                str(row.get("clause_id"))
+                for row in translated
+                if row.get("translation_fallback")
+            ]
+            for row in translated:
+                row.pop("translation_fallback", None)
+            all_rows_fell_back = len(fallback_clause_ids) == len(translated)
             stage_3_out["translation"] = {
                 "language": target,
                 "mode": mode,
-                "rendered": translated,
+                "rendered": None if all_rows_fell_back else translated,
                 "translator": "sarvam/mayura:v1",
-                "error": None,
+                "fallback_clause_ids": fallback_clause_ids,
+                "error": (
+                    "Translation was unavailable, so the English explanation is shown."
+                    if all_rows_fell_back
+                    else (
+                        f"{len(fallback_clause_ids)} clause(s) could not be translated; "
+                        "those clauses are shown in English."
+                        if fallback_clause_ids else None
+                    )
+                ),
             }
         except translate_mod.TranslationError as exc:
             logger.warning(

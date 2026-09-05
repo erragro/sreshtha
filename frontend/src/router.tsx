@@ -11,6 +11,10 @@ import { ConversationStudioPage } from "@/pages/ConversationStudioPage"
 import { HomePage } from "@/pages/HomePage"
 import { IdiomsAdminPage } from "@/pages/IdiomsAdminPage"
 import { LoginPage } from "@/pages/LoginPage"
+import { RightsGuideDetailPage } from "@/pages/RightsGuideDetailPage"
+import { RightsGuidePage } from "@/pages/RightsGuidePage"
+import { SchemeDetailPage } from "@/pages/SchemeDetailPage"
+import { SchemesFinderPage } from "@/pages/SchemesFinderPage"
 import { SignupPage } from "@/pages/SignupPage"
 
 export const router = createBrowserRouter([
@@ -46,6 +50,30 @@ export const router = createBrowserRouter([
             children: [
               { index: true, element: <ContractReaderPage /> },
               { path: ":contractId", element: <ContractDetailPage /> },
+            ],
+          },
+
+          // Rights Guide — statute-cited fact cards.
+          //   /rights            — card list, language switcher
+          //   /rights/:topicKey  — full card with citation + actions
+          {
+            path: "rights",
+            element: <ModuleGuard moduleKey="rights_guide" />,
+            children: [
+              { index: true, element: <RightsGuidePage /> },
+              { path: ":topicKey", element: <RightsGuideDetailPage /> },
+            ],
+          },
+
+          // Schemes Finder — 3-question wizard, matched welfare schemes.
+          //   /schemes           — wizard + inline results
+          //   /schemes/:key      — scheme detail with docs + apply link
+          {
+            path: "schemes",
+            element: <ModuleGuard moduleKey="schemes_finder" />,
+            children: [
+              { index: true, element: <SchemesFinderPage /> },
+              { path: ":key", element: <SchemeDetailPage /> },
             ],
           },
 

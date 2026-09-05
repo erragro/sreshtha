@@ -91,6 +91,7 @@ async def upload_contract(
     target_script: str = "native",
     source_language: Optional[str] = None,
     translation_mode: str = "formal",
+    processing_consent: bool = False,
 ) -> UploadedContract:
     """Validate + persist the file. Returns the DB row.
 
@@ -117,6 +118,11 @@ async def upload_contract(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail=f"target_script must be one of {sorted(_SUPPORTED_SCRIPTS)}",
+        )
+    if target_script == "roman":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Roman-script output is not available yet. Choose native script.",
         )
 
     translation_mode = (translation_mode or "formal").strip()
@@ -157,6 +163,11 @@ async def upload_contract(
             status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"file too large. Max {max_mb} MB.",
         )
+    if not _matches_declared_mime(content, mime):
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="the file contents do not match the selected PDF, JPG, or PNG type",
+        )
 
     # DB row first so we own the id we use for the storage key. If storage
     # write fails, we roll back the row rather than leaving an orphan file.
@@ -171,6 +182,7 @@ async def upload_contract(
         target_language=target_language,
         target_script=target_script,
         translation_mode=translation_mode,
+        processing_consent=processing_consent,
         language=source_lang_clean,
     )
     db.add(contract)
@@ -273,3 +285,19 @@ def _sanitize_filename(name: str) -> str:
         else:
             cleaned = cleaned[:200]
     return cleaned
+
+
+def _matches_declared_mime(content: bytes, mime: str) -> bool:
+    """Cheap signature check before an untrusted document reaches OCR.
+
+    This is deliberately a format gate, not a parser: PyMuPDF/Pillow remain
+    the authoritative decoders, while this rejects obvious spoofed MIME types
+    at the HTTP boundary.
+    """
+    if mime == "application/pdf":
+        return content.lstrip().startswith(b"%PDF-")
+    if mime == "image/jpeg":
+        return content.startswith(b"\xff\xd8\xff")
+    if mime == "image/png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n")
+    return False

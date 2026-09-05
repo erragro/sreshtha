@@ -18,27 +18,20 @@ SQLITE_SEED_PATH = PROJECT_ROOT / "data" / "app.db"
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg://quickbites:quickbites@localhost:5432/quickbites"
+    database_url: str = "postgresql+psycopg://sreshtha:sreshtha@localhost:5432/sreshtha"
 
     # Logical model roles; each provider maps them to a concrete model id.
     model_fast: str = "fast"      # used by Stage 0 classifier
     model_smart: str = "smart"    # used by Stage 1 evaluator + Stage 3 responder
 
-    # Provider routing is automatic, by detected language (see
-    # language_detector.py + llm_provider.get_provider) — en/hi → Gemini,
-    # everything else → Sarvam. No manual provider toggle.
+    # Reasoning provider defaults to OpenAI. Vertex AI (Gemini) is the
+    # explicit fallback for local testing until Contract Reader is
+    # iron-clad on one provider; production swap is deferred.
+    # Google AI Studio bare-key access has been removed — Vertex is
+    # the only Google path (needs GOOGLE_CLOUD_PROJECT + ADC via
+    # `gcloud auth application-default login`).
 
-    # Gemini — supports two auth paths, chosen at runtime by which env
-    # var is set:
-    #   1. GEMINI_API_KEY (Google AI Studio, https://aistudio.google.com/apikey)
-    #      — bare API key, no Google Cloud project needed. Simplest for
-    #      local dev + demos.
-    #   2. GOOGLE_APPLICATION_CREDENTIALS + GOOGLE_CLOUD_PROJECT
-    #      (Vertex AI). Service-account JSON, or ADC via
-    #      `gcloud auth application-default login`. Required in prod
-    #      when you want VPC-SC, IAM, or Vertex-only models.
-    # If GEMINI_API_KEY is set it wins. Otherwise Vertex is attempted.
-    gemini_api_key: str = ""
+    # Vertex AI (Gemini) — backup reasoning path. Auth via ADC only.
     google_cloud_project: str = ""
     google_cloud_location: str = "asia-south1"
     gemini_fast_model: str = "gemini-2.5-flash-lite"
@@ -59,6 +52,20 @@ class Settings(BaseSettings):
     # ideal budget without knowing the subscription tier.
     sarvam_max_tokens_cap: int = 4096
 
+    # OpenAI — default reasoning provider for Contract Reader stages
+    # 1-3 and the Cardinal chat pipeline.
+    openai_api_key: str = ""
+    openai_fast_model: str = "gpt-4o-mini"
+    openai_smart_model: str = "gpt-4o"
+    openai_base_url: str = "https://api.openai.com/v1"
+
+    # Provider selection for the reasoning stack (Stage 1 / Stage 2 /
+    # Stage 3 in ``app/contracts``). One of:
+    #   ""        — default: OpenAI
+    #   "openai"  — explicit OpenAI (same as default)
+    #   "vertex"  — Gemini via Vertex AI (requires GOOGLE_CLOUD_PROJECT + ADC)
+    llm_provider: str = ""
+
     # Google Cloud Translation API v2 (Basic) — language detection only
     google_translate_api_key: str = ""
 
@@ -76,7 +83,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "CHANGE_ME_IN_PRODUCTION_this_default_is_unsafe"
     jwt_algorithm: str = "HS256"
     jwt_access_ttl_minutes: int = 60 * 24        # 24h — matches session UX
-    jwt_issuer: str = "quickbites"
+    jwt_issuer: str = "sreshtha"
     password_min_length: int = 8
     # slowapi limits — string form because slowapi parses these
     auth_signup_rate: str = "10/hour"

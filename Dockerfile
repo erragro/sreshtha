@@ -6,12 +6,20 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-hin tesseract-ocr-ben tesseract-ocr-tam \
+    tesseract-ocr-tel tesseract-ocr-kan tesseract-ocr-mar \
+    libpq5 \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install .
 
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./alembic.ini
+COPY scripts ./scripts
 COPY data ./data
-COPY policy_and_faq.md ./policy_and_faq.md
 
 EXPOSE 8000
 

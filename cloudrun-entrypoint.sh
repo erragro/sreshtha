@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Cloud Run entrypoint: starts an embedded Postgres on /tmp, waits ready,
-# then execs uvicorn. The DB is ephemeral (re-bootstrapped from app.db on
-# every cold start) which is fine for this workload — bot lookup data is
-# read-only and sessions are short-lived per eval run.
+# Cloud Run entrypoint. Production must provide DATABASE_URL for a persistent
+# Postgres instance; the embedded database remains a local-demo fallback only.
 set -euo pipefail
 
-PGUSER=quickbites
-PGPASSWORD=quickbites
-PGDB=quickbites
+if [ -n "${DATABASE_URL:-}" ]; then
+  echo "[entrypoint] using configured persistent database"
+  exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}"
+fi
+
+PGUSER=sreshtha
+PGPASSWORD=sreshtha
+PGDB=sreshtha
 export PGDATA=/tmp/pgdata
 
 PG_BIN="$(ls -d /usr/lib/postgresql/*/bin | head -n 1)"

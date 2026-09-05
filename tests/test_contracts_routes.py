@@ -105,6 +105,7 @@ def test_upload_pdf_creates_row_and_file(client: TestClient, storage_root: Path)
     assert body["mime_type"] == "application/pdf"
     assert body["size_bytes"] == 1024
     assert body["status"] == "uploaded"
+    assert body["processing_consent"] is False
     contract_id = body["id"]
 
     # File should be on disk under contracts/{user_id}/{contract_id}.pdf
@@ -123,6 +124,18 @@ def test_upload_rejects_unsupported_mime(client: TestClient):
     )
     assert r.status_code == 415, r.text
     assert "unsupported file type" in r.json()["detail"].lower()
+
+
+def test_upload_rejects_spoofed_pdf_content(client: TestClient):
+    _, token = _new_user(client)
+    r = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("not-a-contract.pdf", b"not actually a PDF", "application/pdf")},
+        data={"target_language": "en"},
+    )
+    assert r.status_code == 415
+    assert "contents do not match" in r.json()["detail"]
 
 
 def test_upload_rejects_empty_file(client: TestClient):
@@ -162,6 +175,34 @@ def test_upload_accepts_jpeg(client: TestClient):
         data={"target_language": "en"},
     )
     assert r.status_code == 201
+
+
+def test_process_requires_recorded_consent_and_reserves_the_job(client: TestClient):
+    _, token = _new_user(client)
+    upload = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("contract.pdf", _pdf_bytes(400), "application/pdf")},
+        data={"target_language": "en"},
+    )
+    cid = upload.json()["id"]
+
+    blocked = client.post(f"/api/contracts/{cid}/process", headers=_auth(token))
+    assert blocked.status_code == 409
+
+    consented = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("consented.pdf", _pdf_bytes(400), "application/pdf")},
+        data={"target_language": "en", "processing_consent": "true"},
+    )
+    consented_id = consented.json()["id"]
+    started = client.post(f"/api/contracts/{consented_id}/process", headers=_auth(token))
+    assert started.status_code == 202
+    assert started.json()["status"] == "ocr_pending"
+
+    duplicate = client.post(f"/api/contracts/{consented_id}/process", headers=_auth(token))
+    assert duplicate.status_code == 409
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +295,24 @@ def test_get_own_contract_returns_detail(client: TestClient):
     # Detail-only fields present but empty pre-processing.
     assert detail["ocr_text"] is None
     assert detail["stages"] is None
+
+
+def test_download_returns_owned_original_file(client: TestClient):
+    _, token = _new_user(client)
+    content = _pdf_bytes(600)
+    uploaded = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("my contract.pdf", content, "application/pdf")},
+        data={"target_language": "en"},
+    )
+    cid = uploaded.json()["id"]
+
+    downloaded = client.get(f"/api/contracts/{cid}/download", headers=_auth(token))
+    assert downloaded.status_code == 200
+    assert downloaded.content == content
+    assert downloaded.headers["content-type"].startswith("application/pdf")
+    assert "attachment" in downloaded.headers["content-disposition"]
 
 
 # ---------------------------------------------------------------------------

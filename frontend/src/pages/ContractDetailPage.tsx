@@ -9,6 +9,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Download,
   FileText,
   Info,
   Loader2,
@@ -18,7 +19,7 @@ import {
 import { LoaderCircleIcon } from "@/components/animate-ui/icons/loader-circle"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
-import { useContract, useReprocessContract } from "@/hooks/useContracts"
+import { downloadContract, useContract, useReprocessContract } from "@/hooks/useContracts"
 import { humaniseError } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { ContractStatus } from "@/types"
@@ -36,7 +37,11 @@ interface Clause {
 interface Annotation {
   clause_id: string
   risk: Risk
-  statute: string | null
+  citation: {
+    name: string | null
+    section: string | null
+    url: string | null
+  }
   note: string
 }
 
@@ -69,6 +74,7 @@ export function ContractDetailPage() {
   const { contractId } = useParams<{ contractId: string }>()
   const { data: contract, isLoading, error } = useContract(contractId)
   const reprocess = useReprocessContract()
+  const [isDownloading, setIsDownloading] = useState(false)
 
   const onRead = async () => {
     if (!contractId) return
@@ -77,6 +83,18 @@ export function ContractDetailPage() {
       toast.success("Reading started")
     } catch (err) {
       toast.error(humaniseError(err, "Could not start reading"))
+    }
+  }
+
+  const onDownload = async () => {
+    if (!contractId || !contract) return
+    setIsDownloading(true)
+    try {
+      await downloadContract(contractId, contract.filename)
+    } catch (err) {
+      toast.error(humaniseError(err, "Could not download the original contract"))
+    } finally {
+      setIsDownloading(false)
     }
   }
 
@@ -113,8 +131,10 @@ export function ContractDetailPage() {
         // (translation failed), we fall back to the English rendered.
         rendered: Rendered[] | null
         translator?: string
+        fallback_clause_ids?: string[]
         error?: string | null
       }
+      overview?: { top_summary?: string | null; top_actions?: string[] }
     }
   }
 
@@ -174,6 +194,17 @@ export function ContractDetailPage() {
               <span>Uploaded {new Date(contract.created_at).toLocaleString()}</span>
             </div>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onDownload}
+            disabled={isDownloading}
+            className="shrink-0 gap-1.5"
+          >
+            <Download className="size-4" />
+            {isDownloading ? "Downloading…" : "Original"}
+          </Button>
         </div>
       </motion.div>
 
@@ -232,13 +263,12 @@ export function ContractDetailPage() {
           Plain-language rendering was partial: {stages.stage_3.error}
         </NoteBanner>
       )}
-      {contract.target_language !== "en" && translation?.error && !usingTranslation && (
+      {contract.target_language !== "en" && translation?.error && (
         <NoteBanner tone="amber">
-          We could not translate the analysis into {contract.target_language.toUpperCase()}
-          right now: {translation.error}. Showing the English source below.
+          {translation.error}
         </NoteBanner>
       )}
-      {usingTranslation && (
+      {usingTranslation && !translation?.error && (
         <div className="mt-4 flex items-center gap-2 rounded-md border border-brand-200 bg-brand-50/60 px-3 py-2 text-xs text-brand-800 dark:border-brand-900/40 dark:bg-brand-900/20 dark:text-brand-200">
           <Info className="size-3.5 shrink-0" />
           <span>
@@ -246,6 +276,21 @@ export function ContractDetailPage() {
             Original clause text on each card is kept in the language it was written.
           </span>
         </div>
+      )}
+
+      {stages.stage_3?.overview?.top_summary && (
+        <Card className="mt-4 border-brand-200 bg-brand-50/40 dark:border-brand-900/40 dark:bg-brand-900/10">
+          <CardContent className="space-y-3 p-4 text-sm">
+            <p className="font-medium">{stages.stage_3.overview.top_summary}</p>
+            {(stages.stage_3.overview.top_actions ?? []).length > 0 && (
+              <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+                {stages.stage_3.overview.top_actions!.map((action, index) => (
+                  <li key={`${index}-${action}`}>{action}</li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {clauses.length > 0 && (
@@ -531,16 +576,27 @@ function ClauseCard({
           </div>
         )}
 
-        {annotation && (annotation.statute || annotation.note) && (
+        {annotation && (annotation.citation?.name || annotation.note) && (
           <div className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-3.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              {annotation.statute && (
+              {annotation.citation?.name && (
                 <div className="font-medium text-foreground">
-                  {annotation.statute}
+                  {annotation.citation.name}
+                  {annotation.citation.section ? `, ${annotation.citation.section}` : ""}
                 </div>
               )}
               {annotation.note && <div className="mt-0.5">{annotation.note}</div>}
+              {annotation.citation?.url && (
+                <a
+                  href={annotation.citation.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-block font-medium text-brand-700 underline hover:text-brand-600 dark:text-brand-300"
+                >
+                  View source
+                </a>
+              )}
             </div>
           </div>
         )}

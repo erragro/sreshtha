@@ -100,6 +100,8 @@ export interface UploadContractInput {
    *   code-mixed          heavy Hinglish/Benglish
    */
   translationMode?: TranslationMode
+  /** Explicit acknowledgement required before the reader sends text to AI providers. */
+  processingConsent: boolean
 }
 
 
@@ -121,6 +123,7 @@ export function useUploadContract() {
       if (input.targetScript) body.append("target_script", input.targetScript)
       if (input.sourceLanguage) body.append("source_language", input.sourceLanguage)
       if (input.translationMode) body.append("translation_mode", input.translationMode)
+      body.append("processing_consent", String(input.processingConsent))
       const { data } = await api.post<ContractSummary>(
         "/api/contracts",
         body,
@@ -151,4 +154,19 @@ export function useDeleteContract() {
       qc.removeQueries({ queryKey: contractKeys.detail(id) })
     },
   })
+}
+
+
+export async function downloadContract(id: string, filename: string): Promise<void> {
+  const response = await api.get(`/api/contracts/${id}/download`, {
+    responseType: "blob",
+  })
+  const url = URL.createObjectURL(response.data)
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
 }

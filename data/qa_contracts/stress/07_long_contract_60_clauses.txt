@@ -1,0 +1,182 @@
+MASTER SERVICES AGREEMENT
+Aggregator platform × Delivery Partner
+Effective: 1 January 2026
+Version 4.2
+
+BETWEEN:
+MegaDeliver India Pvt. Ltd., 202 DLF Cyber City, Sector 25, Gurugram 122002 ("MDI")
+AND
+The Registered Delivery Partner ("DP")
+
+RECITALS
+A. MDI operates an online food-delivery aggregator platform in India.
+B. The DP wishes to be onboarded to the MDI Platform for the purpose of delivering food orders.
+C. The parties wish to record the terms of their engagement.
+
+1. DEFINITIONS
+
+1.1 "Platform" means the mobile and web application operated by MDI.
+1.2 "Order" means a request from a customer for delivery of food from a merchant partner.
+1.3 "Zone" means the geographic delivery zone assigned to the DP.
+1.4 "Cash on Delivery" or "COD" means an order where the customer pays in cash on delivery.
+1.5 "Payout" means the amount payable to the DP for services rendered.
+1.6 "Rate Card" means the published schedule of per-order payouts.
+1.7 "Onboarding" means the process of activating a DP account on the Platform.
+1.8 "Deactivation" means the suspension of DP access to the Platform.
+
+2. RELATIONSHIP
+
+2.1 The DP is an independent contractor.
+2.2 No employer-employee relationship is created.
+2.3 The DP shall not be entitled to Provident Fund, ESIC, gratuity, or paid leave.
+2.4 The DP acknowledges the freedom to accept or decline any Order.
+2.5 The DP acknowledges the freedom to log off the Platform at any time.
+
+3. ONBOARDING
+
+3.1 The DP shall submit valid identity proof, driving licence, and vehicle documents.
+3.2 MDI shall conduct background verification.
+3.3 The DP shall attend a one-day orientation programme.
+3.4 The DP shall accept the Onboarding fee of Rs 500, deducted from the first payout.
+3.5 The DP shall deposit a refundable security amount of Rs 2,000.
+
+4. RATE AND PAYOUT
+
+4.1 MDI shall publish the Rate Card on the Platform from time to time.
+4.2 MDI reserves the right to modify the Rate Card at its sole discretion.
+4.3 Modifications shall take effect on publication and require no separate notice.
+4.4 The DP waives any objection to Rate Card changes.
+4.5 Payout shall be credited weekly to the DP's registered bank account.
+4.6 Payout is subject to deduction of taxes, penalties, cancellation charges, and disputed order refunds.
+4.7 MDI's determination of any deduction shall be final and binding.
+
+5. WORKING HOURS
+
+5.1 The DP is free to log in and log off at any time.
+5.2 MDI recommends the DP take breaks after long stretches.
+5.3 MDI does not guarantee any minimum Orders per hour.
+
+6. VEHICLE
+
+6.1 The DP shall use their own two-wheeler.
+6.2 The DP shall maintain the vehicle at their own cost.
+6.3 The DP shall carry valid registration and insurance.
+
+7. INSURANCE
+
+7.1 The DP shall arrange comprehensive motor insurance at their own cost.
+7.2 The DP shall arrange personal accident insurance at their own cost.
+7.3 MDI does not provide health, life, or accident insurance.
+
+8. PERFORMANCE STANDARDS
+
+8.1 The DP shall accept at least 70% of Orders offered.
+8.2 The DP shall maintain a customer rating of at least 4.2 out of 5.
+8.3 The DP shall complete Orders within the estimated delivery time.
+8.4 MDI may deactivate the DP for falling below any performance standard.
+
+9. UNIFORM AND APPEARANCE
+
+9.1 The DP shall wear the MDI T-shirt during working hours.
+9.2 The DP shall carry the MDI delivery bag at all times.
+9.3 Cost of uniform and bag is deducted from the first Payout.
+
+10. TERMINATION
+
+10.1 Either party may terminate this agreement at any time without notice.
+10.2 MDI may deactivate the DP account immediately for any policy violation.
+10.3 No hearing, appeal, or reinstatement right is available.
+10.4 On termination, MDI shall pay the pending Payout after deductions within 30 days.
+
+11. INDEMNITY
+
+11.1 The DP shall indemnify MDI against any and all claims arising from the DP's services.
+11.2 The indemnity is unlimited in amount and scope.
+11.3 The indemnity survives termination of this agreement.
+
+12. LIABILITY LIMITATION
+
+12.1 MDI's aggregate liability to the DP shall not exceed Rs 5,000.
+12.2 MDI shall not be liable for indirect, consequential, or punitive damages.
+
+13. NON-COMPETE
+
+13.1 During the term of engagement and for six months after termination, the DP shall not deliver for a competing platform.
+13.2 Breach entitles MDI to injunctive relief and damages of Rs 25,000.
+
+14. CONFIDENTIALITY
+
+14.1 The DP shall not disclose any Platform data, customer data, or business information.
+14.2 This obligation survives termination.
+
+15. INTELLECTUAL PROPERTY
+
+15.1 MDI owns all intellectual property in the Platform, brand, and content.
+15.2 The DP is granted a limited licence to use the Platform.
+
+16. DATA
+
+16.1 The DP consents to collection, use, and sharing of DP data by MDI.
+16.2 Data may be shared with MDI's affiliates, service providers, and business partners.
+16.3 The DP consents to the processing of personal data in accordance with MDI's privacy policy.
+
+17. TAX
+
+17.1 The DP is responsible for filing income tax returns.
+17.2 The DP is responsible for GST registration if turnover exceeds the threshold.
+17.3 MDI shall deduct TDS as required by law.
+
+18. FORCE MAJEURE
+
+18.1 Neither party shall be liable for failure to perform due to events beyond reasonable control.
+
+19. DISPUTE RESOLUTION
+
+19.1 Disputes shall be resolved by arbitration.
+19.2 The seat of arbitration shall be Mumbai.
+19.3 The language of arbitration shall be English.
+19.4 The arbitrator shall be appointed by MDI.
+19.5 The decision of the arbitrator shall be final.
+19.6 The DP waives any right to class or collective action.
+
+20. GOVERNING LAW
+
+20.1 This agreement is governed by the laws of India.
+20.2 Courts of Mumbai shall have exclusive jurisdiction.
+
+21. AMENDMENT
+
+21.1 MDI may amend this agreement at any time by publishing the updated version on the Platform.
+21.2 Continued use of the Platform constitutes acceptance of the amendment.
+
+22. WAIVER OF STATUTORY RIGHTS
+
+22.1 The DP acknowledges that the DP is not covered by the Employees' State Insurance Act, 1948.
+22.2 The DP acknowledges that the DP is not covered by the Payment of Wages Act, 1936.
+22.3 The DP acknowledges that the DP is not covered by the Minimum Wages Act, 1948.
+22.4 The DP waives any claim to gratuity under the Payment of Gratuity Act, 1972.
+
+23. ANTI-CORRUPTION
+
+23.1 The DP shall not offer or accept any bribe or improper payment.
+
+24. NOTICES
+
+24.1 All notices shall be sent by email to the address registered on the Platform.
+
+25. ASSIGNMENT
+
+25.1 The DP shall not assign or transfer this agreement.
+25.2 MDI may assign this agreement to any affiliate.
+
+26. ENTIRE AGREEMENT
+
+26.1 This agreement constitutes the entire understanding between the parties.
+
+27. SEVERABILITY
+
+27.1 If any provision is held unenforceable, the rest of the agreement remains in effect.
+
+28. ACCEPTANCE
+
+28.1 By clicking "Accept" on the Platform, the DP acknowledges having read and agreed to this agreement.

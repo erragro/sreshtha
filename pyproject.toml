@@ -1,7 +1,7 @@
 [project]
-name = "quickbites-bot"
+name = "sreshtha"
 version = "0.1.0"
-description = "QuickBites Support Bot - Cardinal-inspired synchronous 5-phase + 4-stage LLM pipeline"
+description = "Sreshtha — a mobile-responsive web app for India's gig workers. Contract explanations, rights guidance, welfare access, in the worker's language. Built on Google Gemini + Sarvam Mayura."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
@@ -14,6 +14,8 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "httpx>=0.27",
     "google-genai>=1.0",
+    # Persistent contract storage on Cloud Run.
+    "google-cloud-storage>=2.18",
     "python-dotenv>=1.0",
     # Auth: password hashing + JWT + rate limiting
     "bcrypt>=4.2",

@@ -24,6 +24,7 @@ class ContractSummary(BaseModel):
     target_language: str
     target_script: str
     translation_mode: str
+    processing_consent: bool
     contract_type: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -51,4 +52,5 @@ class ContractUploadResponse(BaseModel):
     mime_type: str
     size_bytes: int
     status: str
+    processing_consent: bool
     created_at: datetime

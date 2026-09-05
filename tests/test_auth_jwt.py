@@ -54,7 +54,7 @@ def test_wrong_issuer_rejected():
         "sub": str(uuid.uuid4()),
         "iat": int(time.time()),
         "exp": int(time.time()) + 3600,
-        "iss": "not-quickbites",
+        "iss": "not-sreshtha",
         "type": "access",
     }
     token = jose_jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)

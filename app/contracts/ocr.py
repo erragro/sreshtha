@@ -87,6 +87,9 @@ def _reader_langs_for(source_hint: Optional[str]) -> tuple[str, ...]:
 _READERS: dict[tuple[str, ...], "object"] = {}
 _READERS_LOCK = threading.Lock()
 
+_MAX_PDF_PAGES = 20
+_MAX_RASTER_PIXELS = 20_000_000
+
 
 def _get_reader(languages: tuple[str, ...]):
     """Return a cached EasyOCR Reader for the given language tuple. Loads
@@ -121,9 +124,17 @@ def _pdf_to_images(pdf_bytes: bytes, *, dpi: int = 200) -> list[np.ndarray]:
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
+        if len(doc) > _MAX_PDF_PAGES:
+            raise ValueError(
+                f"PDF has {len(doc)} pages; the maximum is {_MAX_PDF_PAGES}"
+            )
         pages: list[np.ndarray] = []
         for page in doc:
             pix = page.get_pixmap(dpi=dpi, alpha=False)
+            if pix.width * pix.height > _MAX_RASTER_PIXELS:
+                raise ValueError(
+                    "PDF page is too large to read safely; upload a lower-resolution copy"
+                )
             # pixmap.samples is a bytes buffer; reshape into (h, w, channels).
             arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
                 pix.height, pix.width, pix.n,
@@ -134,10 +145,34 @@ def _pdf_to_images(pdf_bytes: bytes, *, dpi: int = 200) -> list[np.ndarray]:
         doc.close()
 
 
+def _extract_pdf_text_layer(pdf_bytes: bytes) -> str:
+    """Read a born-digital PDF's text layer before falling back to OCR.
+
+    Most platform agreements are exported PDFs, not scans. Reading the text
+    layer is substantially faster and avoids recognition errors; scanned or
+    image-only PDFs still follow the existing EasyOCR path.
+    """
+    import fitz  # noqa: WPS433 — PyMuPDF, imported lazily
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        if len(doc) > _MAX_PDF_PAGES:
+            raise ValueError(
+                f"PDF has {len(doc)} pages; the maximum is {_MAX_PDF_PAGES}"
+            )
+        return "\n\n".join(page.get_text("text").strip() for page in doc).strip()
+    finally:
+        doc.close()
+
+
 def _image_to_array(image_bytes: bytes) -> np.ndarray:
     """Decode an image blob to numpy. Converts to RGB up front so
     palettised PNGs and single-channel greyscales normalise cleanly."""
     img = Image.open(io.BytesIO(image_bytes))
+    if img.width * img.height > _MAX_RASTER_PIXELS:
+        raise ValueError(
+            "image is too large to read safely; upload a lower-resolution copy"
+        )
     if img.mode != "RGB":
         img = img.convert("RGB")
     return np.array(img)
@@ -167,17 +202,24 @@ def extract_text(
     contracts. Callers get back the extracted text and echo of the
     source language for downstream stages.
     """
-    reader = _get_reader(_reader_langs_for(source_language))
-
     if mime_type == "application/pdf":
         try:
+            text_layer = _extract_pdf_text_layer(file_bytes)
+            if len(text_layer) >= _LOW_QUALITY_THRESHOLD:
+                return OCRResult(
+                    text=text_layer,
+                    language=source_language or "en",
+                    is_low_quality=False,
+                )
             pages = _pdf_to_images(file_bytes)
         except Exception as exc:
-            logger.exception("OCR: failed to rasterise PDF")
+            logger.exception("OCR: failed to read PDF")
             raise RuntimeError(f"could not read PDF: {exc}") from exc
     else:
         # image/png, image/jpeg — the routes layer already whitelisted MIME.
         pages = [_image_to_array(file_bytes)]
+
+    reader = _get_reader(_reader_langs_for(source_language))
 
     if not pages:
         return OCRResult(text="", language=source_language, is_low_quality=True)

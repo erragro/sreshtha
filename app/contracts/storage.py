@@ -20,6 +20,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlparse
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +88,38 @@ class LocalStorage:
         return self._abs(key).is_file()
 
 
+@dataclass(frozen=True)
+class GCSStorage:
+    """Google Cloud Storage implementation used by Cloud Run deployments."""
+
+    bucket_name: str
+    prefix: str = ""
+
+    def _blob(self, key: str):
+        _validate_key(key)
+        from google.cloud import storage  # deferred for local development
+
+        name = f"{self.prefix}/{key}" if self.prefix else key
+        return storage.Client().bucket(self.bucket_name).blob(name)
+
+    def save(self, key: str, content: bytes) -> None:
+        self._blob(key).upload_from_string(content)
+
+    def load(self, key: str) -> bytes:
+        return self._blob(key).download_as_bytes()
+
+    def delete(self, key: str) -> None:
+        from google.api_core.exceptions import NotFound
+
+        try:
+            self._blob(key).delete()
+        except NotFound:
+            return
+
+    def exists(self, key: str) -> bool:
+        return bool(self._blob(key).exists())
+
+
 def _validate_key(key: str) -> None:
     if not key or key.startswith("/") or ".." in key.split("/"):
         raise ValueError(f"invalid storage key: {key!r}")
@@ -98,11 +131,14 @@ def _validate_key(key: str) -> None:
 
 
 def make_storage(root: str) -> Storage:
-    """Build the default storage backend. Today: LocalStorage. Day 17
-    swaps this to GCSStorage when the root is a `gs://bucket/prefix` URI."""
+    """Build local or persistent GCS storage from the configured root."""
     if root.startswith("gs://"):
-        raise NotImplementedError(
-            "GCS storage backend not implemented yet — Cloud Run deployment (day 17)"
+        parsed = urlparse(root)
+        if not parsed.netloc:
+            raise ValueError("GCS storage root must include a bucket name")
+        return GCSStorage(
+            bucket_name=parsed.netloc,
+            prefix=parsed.path.strip("/"),
         )
     return LocalStorage(root=Path(root).resolve())
 

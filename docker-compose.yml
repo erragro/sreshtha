@@ -1,14 +1,14 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: quickbites
-      POSTGRES_PASSWORD: quickbites
-      POSTGRES_DB: quickbites
+      POSTGRES_USER: sreshtha
+      POSTGRES_PASSWORD: sreshtha
+      POSTGRES_DB: sreshtha
     ports:
-      - "5433:5432"
+      - "5435:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U quickbites"]
+      test: ["CMD-SHELL", "pg_isready -U sreshtha"]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -20,23 +20,31 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Every KEY=value in .env is exposed as an env var here. Individual
+    # entries below only override or hard-pin a value that the compose
+    # network requires (like the Postgres hostname).
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://quickbites:quickbites@postgres:5432/quickbites
-      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
-      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-asia-south1}
+      DATABASE_URL: postgresql+psycopg://sreshtha:sreshtha@postgres:5432/sreshtha
+      APP_ENV: ${APP_ENV:-local}
+      # Vertex AI ADC — if the host has a service-account JSON, set
+      # GOOGLE_APPLICATION_CREDENTIALS_HOST in .env to its host path.
+      # Otherwise the volume mount below is inert and OpenAI is used.
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-key.json
-      GEMINI_FAST_MODEL: ${GEMINI_FAST_MODEL:-gemini-2.5-flash-lite}
-      GEMINI_SMART_MODEL: ${GEMINI_SMART_MODEL:-gemini-2.5-flash}
-      SARVAM_API_KEY: ${SARVAM_API_KEY}
-      SARVAM_FAST_MODEL: ${SARVAM_FAST_MODEL:-sarvam-30b}
-      SARVAM_SMART_MODEL: ${SARVAM_SMART_MODEL:-sarvam-105b}
-      GOOGLE_TRANSLATE_API_KEY: ${GOOGLE_TRANSLATE_API_KEY}
-      SIMULATOR_BASE_URL: ${SIMULATOR_BASE_URL}
-      CANDIDATE_TOKEN: ${CANDIDATE_TOKEN}
     volumes:
       - ${GOOGLE_APPLICATION_CREDENTIALS_HOST:-/dev/null}:/secrets/gcp-key.json:ro
+      - contract_uploads:/app/data/contracts
     ports:
       - "8000:8000"
 
+  frontend:
+    build: ./frontend
+    depends_on:
+      - app
+    ports:
+      - "5173:80"
+
 volumes:
   pgdata:
+  contract_uploads:

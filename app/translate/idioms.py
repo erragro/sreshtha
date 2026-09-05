@@ -85,7 +85,10 @@ class Substitution:
 # languages that don't share Latin script — the model treats it as a
 # proper-noun-like token rather than something to translate.
 _PLACEHOLDER_TEMPLATE = "[[IDM_{n}]]"
-_PLACEHOLDER_RE = re.compile(r"\[\[IDM_(\d+)\]\]")
+# Mayura occasionally normalises ``[[IDM_1]]`` to ``[IDM_1]``. Accept both
+# forms (and tolerate one unmatched bracket) so a marker never reaches a
+# worker-facing translation.
+_PLACEHOLDER_RE = re.compile(r"\[\[?IDM_(\d+)\]\]?")
 
 
 def _placeholder(n: int) -> str:
@@ -308,23 +311,32 @@ def substitute(text: str, target_language: str) -> tuple[str, list[Substitution]
 
 def restore(translated_text: str, subs: Iterable[Substitution]) -> str:
     """Swap placeholders in `translated_text` for their target-language
-    equivalents. Missing placeholders (Mayura sometimes drops or
-    duplicates unusual tokens) are logged. Any surviving stray
-    `[[IDM_n]]` tokens (either from a foreign call or from Mayura
-    hallucinating extra ones) are stripped — better empty than a
-    leaked debug token visible on the card."""
+    equivalents. Mayura sometimes reduces a double-bracket marker to a
+    single-bracket marker, so both forms are restored. Missing placeholders
+    (Mayura sometimes drops or duplicates unusual tokens) are logged. Any
+    surviving stray marker is stripped — better empty than a leaked debug
+    token visible on the card."""
     subs_list = list(subs)
-    out = translated_text
-    missing: list[str] = []
-    for sub in subs_list:
-        if sub.placeholder in out:
-            out = out.replace(sub.placeholder, sub.target_translation)
-        else:
-            missing.append(sub.placeholder)
-    # Belt-and-braces sweep for any [[IDM_n]] that survived — either
-    # because it was never in our subs list, or because it appeared
-    # somewhere our exact-match replace didn't catch.
-    out = _PLACEHOLDER_RE.sub("", out)
+    substitutions_by_number = {
+        str(index): sub for index, sub in enumerate(subs_list, start=1)
+    }
+    restored_numbers: set[str] = set()
+
+    def replace_marker(match: re.Match[str]) -> str:
+        number = match.group(1)
+        sub = substitutions_by_number.get(number)
+        if sub is None:
+            # A marker not created for this fragment must not leak through.
+            return ""
+        restored_numbers.add(number)
+        return sub.target_translation
+
+    out = _PLACEHOLDER_RE.sub(replace_marker, translated_text)
+    missing = [
+        sub.placeholder
+        for index, sub in enumerate(subs_list, start=1)
+        if str(index) not in restored_numbers
+    ]
     if missing:
         logger.warning(
             "idiom restore: %d placeholders missing from Mayura output "

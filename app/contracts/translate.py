@@ -220,6 +220,10 @@ def _english_fallback(payload: _RowPayload) -> dict[str, Any]:
         "explanation": payload.explanation,
         "implication": payload.implication,
         "action": None if payload.action_was_none else (payload.action or None),
+        # Kept until the processor records which rows are genuinely
+        # translated. Without it the UI would label English fallback text as
+        # Mayura output after a partial provider failure.
+        "translation_fallback": True,
     }
 
 

@@ -260,3 +260,96 @@ export interface IdiomUpdateInput {
   category?: IdiomCategory
   is_active?: boolean
 }
+
+
+// ------- Rights Guide -------
+
+export interface FactCardActionStep {
+  label: string
+  description: string
+  /** Optional. When present, the action label renders as a link. */
+  url?: string
+}
+
+export interface FactCardSummary {
+  topic_key: string
+  title: string
+  icon: string | null
+  sort_order: number
+}
+
+export interface FactCardListResponse {
+  language: TargetLanguage
+  cards: FactCardSummary[]
+}
+
+export interface FactCardDetail {
+  topic_key: string
+  language: TargetLanguage
+  title: string
+  /** 2-3 short paragraphs, newline-separated. Rendered as plain text. */
+  summary: string
+  citation: string | null
+  action_steps: FactCardActionStep[]
+  icon: string | null
+  sort_order: number
+  /** True when the requested language was not active and the response
+   *  fell back to English. */
+  language_fallback: boolean
+}
+
+
+// ------- Schemes Finder -------
+
+export interface WorkerProfile {
+  state?: string | null
+  occupation?: string | null
+  age?: number | null
+  gender?: string | null
+  has_bank_account?: boolean | null
+  has_eshram?: boolean | null
+  has_daughter_under_10?: boolean | null
+  likely_means_tested_eligible?: boolean | null
+}
+
+export interface SchemeDoc {
+  name: string
+  note?: string | null
+}
+
+export interface SchemeSummary {
+  key: string
+  name: string
+  icon: string | null
+  state_scope: string | null
+  sort_order: number
+}
+
+export interface SchemeMatch extends SchemeSummary {
+  reasons: string[]
+}
+
+export interface SchemeDetail {
+  key: string
+  language: TargetLanguage
+  name: string
+  description: string
+  apply_note: string | null
+  apply_url: string | null
+  docs_needed: SchemeDoc[]
+  estimated_time: string | null
+  state_scope: string | null
+  icon: string | null
+  language_fallback: boolean
+}
+
+export interface SchemesListResponse {
+  language: TargetLanguage
+  schemes: SchemeSummary[]
+}
+
+export interface MatchResponse {
+  language: TargetLanguage
+  matches: SchemeMatch[]
+  total_candidates: number
+}

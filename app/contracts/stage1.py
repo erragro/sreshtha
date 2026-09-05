@@ -50,11 +50,27 @@ Your job is to:
    - rental      (vehicle or equipment lease agreement)
    - unknown     (cannot determine with confidence)
 
+3. Extract document-level metadata (parties, dates, jurisdiction). This
+   gives the downstream stages the context they need to reason correctly
+   (a Karnataka jurisdiction unlocks welfare-board reasoning; a signature
+   date affects which statute revision applies).
+
 Return ONLY a JSON object with this shape (no prose):
 
 {
   "contract_type": "<one of the five above>",
   "confidence": <float 0.0 to 1.0>,
+  "metadata": {
+    "parties": [
+      {"role": "worker" | "platform" | "employer" | "vendor" | "lessor" | "lessee" | "other",
+       "name": "<name as written, or null>"}
+    ],
+    "signature_date": "<ISO date YYYY-MM-DD, or null if unclear>",
+    "effective_date": "<ISO date YYYY-MM-DD, or null if unclear>",
+    "term": "<free text: '12 months', 'indefinite', 'until terminated', or null>",
+    "jurisdiction": "<state or 'India', or null>",
+    "governing_language": "<language of the contract text: en, hi, bn, ta, te, kn, mr, or 'mixed'>"
+  },
   "clauses": [
     {
       "id": "<stable string, e.g. clause_1 or clause_3a>",
@@ -70,7 +86,8 @@ Guidelines:
 - If the document has explicit numbered clauses (1., 2.1, 3(a)), use those numbers in section_number and derive id from them.
 - If there are no explicit numbers, invent stable ids: clause_1, clause_2, ...
 - Preserve line breaks within a clause using \\n.
-- If the OCR text is garbled or clearly not a contract, return contract_type='unknown', confidence=0, clauses=[].
+- Metadata: use null for anything you cannot infer with reasonable confidence. Do NOT hallucinate parties or dates. If the contract is mostly one language with occasional English loanwords, governing_language is the majority language, not 'mixed'.
+- If the OCR text is garbled or clearly not a contract, return contract_type='unknown', confidence=0, clauses=[], metadata with all null fields.
 - Do NOT summarise or reword clauses. Verbatim only.
 """
 
@@ -79,27 +96,132 @@ def analyse(ocr_text: str, language: str = "en") -> dict[str, Any]:
     """Run Stage 1 on the OCR text. Returns the parsed dict; the caller
     persists it into the row's `stages.stage_1` slot.
 
-    Language routing: pass the detected language of the contract, not the
-    UI language of the user. Gemini reads all 7 target languages; Sarvam
-    handles the rest. But because clauses can be in mixed languages
-    (English preamble + Hindi body) we pass the majority language.
+    Provider mapping (per-stage hybrid architecture):
+      - Primary: OpenAI ``gpt-4o-mini`` with Structured Outputs. Cheap,
+        fast, schema-guaranteed JSON — extraction is a shape-imposition
+        task where mini is at parity with 4o.
+      - Fallback: OpenAI ``gpt-4o`` (smart role). Triggered when mini
+        emits confidence < 0.4 or zero clauses. Costs ~15× more per
+        call but ships only on pathological documents.
     """
-    provider = get_provider(language)
+    provider = get_provider(language, provider="openai")
 
     raw = provider.chat(
-        role="smart",
+        role="fast",  # gpt-4o-mini
         system=_SYSTEM,
         user=f"OCR text of the contract:\n\n{ocr_text}",
-        # Real gig-worker contracts run 3-8 pages of dense legalese, so
-        # the structured-JSON output (verbatim clause text × N clauses)
-        # regularly hits 20K+ tokens. Anything below and Gemini's output
-        # truncates mid-clause, which explodes our JSON parser and
-        # produces zero clauses. Gemini 2.5 Flash caps at 65K output.
-        max_tokens=32768,
+        # 4o-mini output ceiling is 16K. Real 3-8 page contracts fit
+        # comfortably inside this budget; if we ever see truncation we
+        # fall through to the smart-role fallback below.
+        max_tokens=16000,
         temperature=0.0,
+        schema=_STAGE1_SCHEMA,
     )
+    result = _parse(raw)
 
-    return _parse(raw)
+    # Fallback path: confidence gate. Extraction that comes back with
+    # low confidence OR zero clauses gets one retry on gpt-4o (smart).
+    if _needs_fallback(result):
+        logger.info(
+            "stage 1: mini output low-confidence (%.2f, %d clauses) — "
+            "retrying on smart model",
+            result.get("confidence", 0.0),
+            len(result.get("clauses") or []),
+        )
+        raw = provider.chat(
+            role="smart",  # gpt-4o
+            system=_SYSTEM,
+            user=f"OCR text of the contract:\n\n{ocr_text}",
+            max_tokens=16000,
+            temperature=0.0,
+            schema=_STAGE1_SCHEMA,
+        )
+        result = _parse(raw)
+        result["_fallback"] = "smart"
+
+    return result
+
+
+def _needs_fallback(result: dict[str, Any]) -> bool:
+    if result.get("error"):
+        return True
+    conf = float(result.get("confidence") or 0.0)
+    clauses = result.get("clauses") or []
+    return conf < 0.4 or len(clauses) == 0
+
+
+# ---------------------------------------------------------------------------
+# Structured Outputs schema
+# ---------------------------------------------------------------------------
+#
+# Mirrors the shape the system prompt commits to. OpenAI Structured
+# Outputs enforces this exactly; Vertex Gemini honours it if a caller
+# routes here through the vertex path. Kept as a plain dict so it works
+# with both providers unchanged.
+
+_STAGE1_SCHEMA: dict[str, Any] = {
+    "name": "contract_extraction",
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["contract_type", "confidence", "metadata", "clauses"],
+        "properties": {
+            "contract_type": {
+                "type": "string",
+                "enum": list(sorted(_ALLOWED_TYPES)),
+            },
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "metadata": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "parties", "signature_date", "effective_date",
+                    "term", "jurisdiction", "governing_language",
+                ],
+                "properties": {
+                    "parties": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["role", "name"],
+                            "properties": {
+                                "role": {
+                                    "type": "string",
+                                    "enum": ["worker", "platform", "employer",
+                                             "vendor", "lessor", "lessee", "other"],
+                                },
+                                "name": {"type": ["string", "null"]},
+                            },
+                        },
+                    },
+                    "signature_date":     {"type": ["string", "null"]},
+                    "effective_date":     {"type": ["string", "null"]},
+                    "term":               {"type": ["string", "null"]},
+                    "jurisdiction":       {"type": ["string", "null"]},
+                    "governing_language": {
+                        "type": ["string", "null"],
+                        "enum": ["en", "hi", "bn", "ta", "te", "kn", "mr", "mixed", None],
+                    },
+                },
+            },
+            "clauses": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["id", "heading", "section_number", "text"],
+                    "properties": {
+                        "id":             {"type": "string"},
+                        "heading":        {"type": ["string", "null"]},
+                        "section_number": {"type": ["string", "null"]},
+                        "text":           {"type": "string"},
+                    },
+                },
+            },
+        },
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -161,11 +283,79 @@ def _finalize(data: dict) -> dict[str, Any]:
     clauses_raw = data.get("clauses") or []
     clauses = _clean_clauses(clauses_raw)
 
+    metadata = _clean_metadata(data.get("metadata"))
+
     return {
         "contract_type": contract_type,
         "confidence": confidence,
+        "metadata": metadata,
         "clauses": clauses,
         "error": None,
+    }
+
+
+_ROLE_ALLOWED = {"worker", "platform", "employer", "vendor", "lessor", "lessee", "other"}
+_LANG_ALLOWED = {"en", "hi", "bn", "ta", "te", "kn", "mr", "mixed"}
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _clean_metadata(raw: Any) -> dict[str, Any]:
+    """Normalise the metadata block. Missing / malformed → all-null
+    metadata, never a raise. Every caller can treat the shape as
+    guaranteed."""
+
+    def _null_metadata() -> dict[str, Any]:
+        return {
+            "parties": [],
+            "signature_date": None,
+            "effective_date": None,
+            "term": None,
+            "jurisdiction": None,
+            "governing_language": None,
+        }
+
+    if not isinstance(raw, dict):
+        return _null_metadata()
+
+    parties_raw = raw.get("parties")
+    parties: list[dict[str, Any]] = []
+    if isinstance(parties_raw, list):
+        for p in parties_raw:
+            if not isinstance(p, dict):
+                continue
+            role = str(p.get("role") or "").strip().lower()
+            if role not in _ROLE_ALLOWED:
+                role = "other"
+            name = p.get("name")
+            name = str(name).strip() if isinstance(name, str) and name.strip() else None
+            parties.append({"role": role, "name": name})
+
+    def _iso_or_null(v: Any) -> str | None:
+        if isinstance(v, str) and _ISO_DATE.match(v.strip()):
+            return v.strip()
+        return None
+
+    lang = raw.get("governing_language")
+    if isinstance(lang, str):
+        lang = lang.strip().lower()
+        if lang not in _LANG_ALLOWED:
+            lang = None
+    else:
+        lang = None
+
+    jur = raw.get("jurisdiction")
+    jur = str(jur).strip() if isinstance(jur, str) and jur.strip() else None
+
+    term = raw.get("term")
+    term = str(term).strip() if isinstance(term, str) and term.strip() else None
+
+    return {
+        "parties": parties,
+        "signature_date": _iso_or_null(raw.get("signature_date")),
+        "effective_date": _iso_or_null(raw.get("effective_date")),
+        "term": term,
+        "jurisdiction": jur,
+        "governing_language": lang,
     }
 
 
@@ -255,6 +445,7 @@ def _empty_result(error: str) -> dict[str, Any]:
     return {
         "contract_type": "unknown",
         "confidence": 0.0,
+        "metadata": _clean_metadata(None),
         "clauses": [],
         "error": error,
     }

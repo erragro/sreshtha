@@ -6,7 +6,7 @@ import type { User } from "@/types"
 // Storage-key note: change this to invalidate all sessions on next deploy
 // (e.g., after a breaking JWT change). Version bump = forced re-login for
 // everyone. Cheap way to close the door on a leaked signing key.
-const STORAGE_KEY = "quickbites-auth-v1"
+const STORAGE_KEY = "sreshtha-auth-v1"
 
 interface AuthState {
   token: string | null

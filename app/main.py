@@ -20,6 +20,8 @@ from app.models import User
 from app.runners import dev_runner, prod_runner
 from app.runners.session_runner import SessionSummary
 from app.contracts.routes import router as contracts_router
+from app.rights.routes import router as rights_router
+from app.schemes.routes import router as schemes_router
 from app.conversation_studio.admin_routes import (
     router as conversation_admin_router,
 )
@@ -41,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 app = FastAPI(
-    title="QuickBites Support Bot",
+    title="Sreshtha API",
     version="0.1.0",
     description="Cardinal-inspired synchronous 5-phase + 4-stage LLM pipeline.",
 )
@@ -64,6 +66,8 @@ app.include_router(chat_starters_router)
 app.include_router(chat_issue_router)
 app.include_router(conversation_admin_router)
 app.include_router(contracts_router)
+app.include_router(rights_router)
+app.include_router(schemes_router)
 app.include_router(idioms_admin_router)
 app.include_router(modules_router)
 app.include_router(admin_router)

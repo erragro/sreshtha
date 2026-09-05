@@ -1,0 +1,82 @@
+PLATFORM PARTNER AGREEMENT
+Karnataka-compliant version, effective 1 April 2026
+
+Between:
+NammaGig Technologies Pvt. Ltd., 45 MG Road, Bengaluru 560001 ("the Platform")
+
+And:
+The undersigned Platform Partner ("the Partner")
+
+Both parties acknowledge that this agreement shall be interpreted in a manner consistent with the Karnataka Platform-Based Gig Workers (Social Security and Welfare) Ordinance, 2024, the Code on Social Security, 2020, and the Central Motor Vehicles Rules (2024 amendment).
+
+CLAUSE 1 — RELATIONSHIP
+
+1.1 The Partner is a platform-based gig worker within the meaning of Section 2 of the Karnataka Platform-Based Gig Workers (Social Security and Welfare) Ordinance, 2024. The Partner is not an employee of the Platform.
+
+1.2 The Platform acknowledges the Partner's rights as a registered platform-based gig worker under the said Ordinance, including welfare entitlements funded by the Platform's welfare fee contribution to the State Welfare Board.
+
+CLAUSE 2 — WORKING HOURS
+
+2.1 The Partner shall not be engaged on the Platform for more than twelve (12) hours in any twenty-four (24) hour period, in accordance with the Central Motor Vehicles Rules (2024 amendment).
+
+2.2 The Platform shall not accept assignment requests from the Partner who has exceeded the twelve-hour cap until the Partner has taken at least ten (10) consecutive hours off the Platform.
+
+CLAUSE 3 — INSURANCE
+
+3.1 The Platform shall provide, at its own cost, the following insurance covers to the Partner during the term of engagement:
+    (a) Health insurance for a sum insured of not less than Rs 5,00,000 (Rupees Five Lakh only);
+    (b) Term life insurance for a sum insured of not less than Rs 10,00,000 (Rupees Ten Lakh only);
+    (c) Personal accident insurance covering death or permanent disability arising from any incident during the performance of assigned work.
+
+3.2 The Partner shall be provided a copy of each insurance policy document within seven (7) working days of onboarding, in the language of the Partner's choice from Kannada, Hindi, and English.
+
+CLAUSE 4 — PAYMENT
+
+4.1 The Platform shall pay the Partner every Monday by direct bank transfer, for services completed in the preceding week.
+
+4.2 The estimated payout for each assignment shall be displayed to the Partner at the time of acceptance, and shall not vary by more than five percent (5%) from the amount actually paid, except for tolls, wait time, or customer-initiated route changes.
+
+4.3 The Platform's commission shall not exceed twenty percent (20%) of the applicable customer fare.
+
+CLAUSE 5 — TERMINATION
+
+5.1 The Platform shall not terminate the engagement of the Partner without providing at least fourteen (14) days' written notice in accordance with Section 14 of the Karnataka Ordinance 2024, and shall specify the reason for termination in writing.
+
+5.2 The Partner may terminate this engagement at any time by giving forty-eight (48) hours' notice.
+
+5.3 The Platform shall not deactivate the Partner's account except in cases of established safety violations or established fraud, and shall provide a seven-day written notice with an opportunity to be heard in all other cases.
+
+CLAUSE 6 — GRIEVANCE REDRESSAL
+
+6.1 The Platform has designated Mr. Suresh Kumar as the Grievance Redressal Officer under Rule 4 of the CMV Rules 2024 amendment. His contact details are:
+    Email: grievance@nammagig.com
+    Phone: 080-4001-5555
+    Address: 45 MG Road, Bengaluru 560001
+
+6.2 The Grievance Redressal Officer shall acknowledge every complaint within twenty-four (24) hours and shall resolve every complaint within fifteen (15) days.
+
+6.3 The Partner may escalate any unresolved grievance to the Karnataka Platform-Based Gig Workers Welfare Board within thirty (30) days of the Platform's response.
+
+CLAUSE 7 — SAFETY TRAINING
+
+7.1 The Platform shall conduct a mandatory safety training programme for the Partner at least once every twelve (12) months, covering road safety, gender sensitivity, and grievance mechanisms.
+
+7.2 Time spent on such training shall be compensated at the average hourly earnings of the Partner in the preceding month.
+
+CLAUSE 8 — DATA
+
+8.1 The Platform shall collect only such Partner data as is necessary for the operation of the Platform and the discharge of statutory obligations, in accordance with the Digital Personal Data Protection Act, 2023.
+
+8.2 The Partner may exercise their rights under the DPDP Act, 2023 at any time by writing to the Data Protection Officer at dpo@nammagig.com.
+
+CLAUSE 9 — GOVERNING LAW
+
+9.1 This agreement is governed by the laws of India.
+
+9.2 Any dispute shall be resolved through the grievance redressal mechanism above, escalating if unresolved to the Karnataka Welfare Board and thereafter to the courts of Bengaluru.
+
+For NammaGig Technologies Pvt. Ltd.
+Authorised Signatory: _______________________
+Date: 1st April, 2026
+
+Partner Signature: _______________________

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -30,6 +31,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import db_session_dep, get_current_active_user
@@ -58,6 +60,7 @@ async def upload_contract(
     target_script: Annotated[str, Form(description="'native' or 'roman'. Only used when target_language != 'en'.")] = "native",
     source_language: Annotated[str | None, Form(description="Optional OCR hint if the worker knows the contract's script.")] = None,
     translation_mode: Annotated[str, Form(description="Sarvam Mayura tone/register: formal | modern-colloquial | classic-colloquial | code-mixed. Default 'formal' (pure Hindi/Bengali/etc.). 'code-mixed' produces Hinglish-style output with English loanwords retained.")] = "formal",
+    processing_consent: Annotated[bool, Form(description="Required acknowledgement that contract text and derived clauses are processed by configured AI providers.")] = False,
 ) -> ContractUploadResponse:
     """Accept a PDF/JPG/PNG contract and persist it in 'uploaded' state.
     Does NOT auto-fire processing — the worker starts the read from the
@@ -77,6 +80,7 @@ async def upload_contract(
         target_script=target_script,
         source_language=source_language,
         translation_mode=translation_mode,
+        processing_consent=processing_consent,
     )
     return ContractUploadResponse.model_validate(contract)
 
@@ -98,8 +102,24 @@ def reprocess_contract(
     row = contract_service.load_owned_contract(
         db=db, user=user, contract_id=contract_id,
     )
-    # The row already exists so no commit needed for visibility, but
-    # match the upload path's shape for symmetry.
+    if not row.processing_consent:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="This upload has no recorded processing consent. Upload it again and acknowledge the processing notice.",
+        )
+    if row.status in {"ocr_pending", "ocr_done", "processing"}:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="contract processing is already in progress",
+        )
+    if row.status not in {"uploaded", "failed"}:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="only uploaded or failed contracts can be processed again",
+        )
+    row.status = "ocr_pending"
+    row.error_message = None
+    db.commit()
     background.add_task(processor.process_contract_bg, row.id)
     return ContractDetail.model_validate(row)
 
@@ -131,6 +151,31 @@ def get_contract(
         db=db, user=user, contract_id=contract_id,
     )
     return ContractDetail.model_validate(row)
+
+
+@router.get("/{contract_id}/download")
+def download_contract(
+    contract_id: uuid.UUID,
+    user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[Session, Depends(db_session_dep)],
+) -> StreamingResponse:
+    """Return the caller's original upload without exposing storage keys."""
+    row = contract_service.load_owned_contract(
+        db=db, user=user, contract_id=contract_id,
+    )
+    try:
+        content = contract_service.get_storage().load(row.storage_key)
+    except FileNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="contract file not found")
+    return StreamingResponse(
+        iter([content]),
+        media_type=row.mime_type,
+        headers={
+            "Content-Disposition": (
+                "attachment; filename*=UTF-8''" + quote(row.filename, safe="")
+            ),
+        },
+    )
 
 
 @router.delete("/{contract_id}", status_code=status.HTTP_204_NO_CONTENT)
