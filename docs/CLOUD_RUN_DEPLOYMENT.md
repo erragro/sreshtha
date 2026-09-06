@@ -4,6 +4,26 @@ This document describes the manual production deployment process for Sreshtha on
 
 The production deployment is intentionally **manual**. GitHub is the source repository, while Docker images are built locally, pushed to Artifact Registry, and deployed manually to Cloud Run.
 
+## Deployment Ownership
+
+The GCP production environment is already configured and is managed separately from normal application development.
+
+The designated deployment owner is responsible for:
+
+- GCP authentication
+- Artifact Registry
+- Docker image builds and pushes
+- Cloud Run deployments
+- Cloud SQL connectivity
+- Secret Manager configuration
+- Production smoke testing
+- Cloud Run logs and troubleshooting
+- Production rollback
+
+Application developers do not need GCP access for normal code development.
+
+Do not modify production infrastructure unless explicitly required.
+
 ---
 
 ## 1. Production Architecture
@@ -80,6 +100,25 @@ Deploy image to Cloud Run
 Run production smoke tests
 ```
 
+### Production Source of Truth
+
+`origin/main` is the source of truth for production application code.
+
+Before any production deployment:
+
+```bash
+git checkout main
+git pull origin main
+```
+
+Verify the commit being deployed:
+
+```bash
+git rev-parse --short HEAD
+```
+
+The Docker image tag should correspond to this Git commit.
+
 There is currently **no automatic GitHub → Cloud Run CI/CD deployment**.
 
 Do not re-enable or depend on the previous Cloud Build trigger unless the deployment architecture is deliberately changed.
@@ -126,7 +165,48 @@ gcloud auth configure-docker asia-south1-docker.pkg.dev
 
 ---
 
-# 4. Deployment Variables
+# 5. Production Configuration — Do Not Change Accidentally
+
+The following configuration is part of the established production architecture.
+
+Do not change these values or configurations unless the production architecture is
+deliberately being modified and the deployment process is reviewed accordingly.
+
+| Configuration | Current value |
+|---|---|
+| GCP Project | `gen-lang-client-0368265372` |
+| Region | `asia-south1` |
+| Artifact Registry | `sreshtha` |
+| API Cloud Run service | `sreshtha-api` |
+| Frontend Cloud Run service | `sreshtha-web` |
+| Cloud SQL instance | `sreshtha-db` |
+| PostgreSQL database | `sreshtha` |
+| Runtime service account | `sreshtha-run` |
+| Contracts bucket | `gen-lang-client-0368265372-sreshtha-contracts` |
+
+In particular, do not casually change:
+
+- Cloud Run service names
+- Cloud SQL configuration
+- Runtime service account
+- Secret Manager secret names
+- Artifact Registry repository
+- Production API URL
+- Production frontend URL
+- `API_UPSTREAM`
+- Frontend nginx proxy configuration
+- The root API `Dockerfile`
+- Alembic migration configuration
+
+Do not introduce GitHub Actions, Cloud Build deployment triggers, or another
+automatic deployment mechanism unless the production deployment architecture is
+deliberately changed.
+
+The current production deployment process is manual.
+
+---
+
+# 6. Deployment Variables
 
 From the repository root, define:
 
@@ -159,7 +239,7 @@ echo "$CLOUD_SQL_CONNECTION"
 
 ---
 
-# 5. Verify GCP Resources Before Deployment
+# 6. Verify GCP Resources Before Deployment
 
 Do not recreate resources blindly.
 
@@ -228,7 +308,7 @@ gcloud run services describe sreshtha-web \
 
 ---
 
-# 6. Secrets
+# 7. Secrets
 
 Production secrets are stored in Google Secret Manager.
 
@@ -262,7 +342,7 @@ SARVAM_API_KEY  → sarvam-api-key:latest
 
 ---
 
-# 7. API Docker Image
+# 8. API Docker Image
 
 ## Important
 
@@ -288,9 +368,23 @@ The root Dockerfile includes the Alembic migration directory:
 
 This is required because the production container runs database migrations during startup.
 
+### Do not remove Alembic from the production image
+
+The production container runs database migrations during startup.
+
+The image must contain:
+
+```text
+/app/alembic
+/app/alembic.ini
+```
+
+Any Dockerfile change that removes these files can cause the application to start
+without a usable database schema and result in authentication/API failures.
+
 ---
 
-# 8. Build the API
+# 9. Build the API
 
 First check the current commit:
 
@@ -318,7 +412,7 @@ The `linux/amd64` platform is intentional because Cloud Run uses the amd64 archi
 
 ---
 
-# 9. Push the API Image
+# 10. Push the API Image
 
 ```bash
 docker push \
@@ -334,7 +428,7 @@ gcloud artifacts docker images list \
 
 ---
 
-# 10. Deploy the API to Cloud Run
+# 11. Deploy the API to Cloud Run
 
 Deploy:
 
@@ -362,7 +456,7 @@ The production database URL must remain managed through Secret Manager.
 
 ---
 
-# 11. Database Migrations
+# 12. Database Migrations
 
 The API container runs Alembic migrations during startup.
 
@@ -392,7 +486,7 @@ Do not manually create application tables in production unless specifically requ
 
 ---
 
-# 12. API Smoke Tests
+# 13. API Smoke Tests
 
 Check the health endpoint:
 
@@ -406,37 +500,25 @@ Expected:
 HTTP/2 200
 ```
 
-Then test authentication.
+Then test authentication using an existing designated production test account.
 
-Example signup:
+Do not create test users in production as part of the normal deployment process.
 
-```bash
-curl -i -X POST "${API_URL}/auth/signup" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "test@example.com",
-    "password": "temporary-password"
-  }'
-```
-
-Expected successful signup:
-
-```text
-HTTP 201
-```
-
-Test login:
+### Login
 
 ```bash
 curl -i -X POST "${API_URL}/auth/login" \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "test@example.com",
-    "password": "temporary-password"
+    "email": "PRODUCTION_TEST_EMAIL",
+    "password": "PRODUCTION_TEST_PASSWORD"
   }'
 ```
 
 A successful login should return a JWT.
+
+The production test account credentials must not be committed to the repository
+or documented in this file.
 
 Use the returned token to test:
 
@@ -452,7 +534,7 @@ GET /api/modules
 
 ---
 
-# 13. Frontend Docker Image
+# 14. Frontend Docker Image
 
 The frontend is served through nginx.
 
@@ -482,7 +564,7 @@ This allows Cloud Run to provide the API URL at runtime.
 
 ---
 
-# 14. Frontend API Configuration
+# 15. Frontend API Configuration
 
 Production:
 
@@ -512,7 +594,7 @@ Request Header Or Cookie Too Large
 
 ---
 
-# 15. Build the Frontend
+# 16. Build the Frontend
 
 Use the same commit tag:
 
@@ -532,7 +614,7 @@ docker build \
 
 ---
 
-# 16. Push the Frontend Image
+# 17. Push the Frontend Image
 
 ```bash
 docker push \
@@ -548,7 +630,7 @@ gcloud artifacts docker images list \
 
 ---
 
-# 17. Deploy the Frontend to Cloud Run
+# 18. Deploy the Frontend to Cloud Run
 
 ```bash
 gcloud run deploy ${WEB_SERVICE} \
@@ -563,7 +645,7 @@ gcloud run deploy ${WEB_SERVICE} \
 
 ---
 
-# 18. Frontend Smoke Tests
+# 19. Frontend Smoke Tests
 
 Check the frontend health endpoint:
 
@@ -603,7 +685,7 @@ text/html
 
 ---
 
-# 19. Browser Verification
+# 20. Browser Verification
 
 After both services deploy:
 
@@ -620,7 +702,7 @@ After both services deploy:
 
 ---
 
-# 20. Cloud Run Revisions
+# 21. Cloud Run Revisions
 
 Every deployment creates a new Cloud Run revision.
 
@@ -660,7 +742,7 @@ The latest successful deployment should normally receive 100% traffic.
 
 ---
 
-# 21. Logs
+# 22. Logs
 
 API:
 
@@ -694,7 +776,7 @@ gcloud beta run services logs tail sreshtha-web \
 
 ---
 
-# 22. Rollback
+# 23. Rollback
 
 If the latest revision is broken, first list revisions:
 
@@ -726,20 +808,21 @@ Replace `KNOWN_GOOD_REVISION` with the actual revision name.
 
 ---
 
-# 23. Normal Production Update Procedure
+# 24. Normal Production Update Procedure
 
-For a normal application update:
+For a normal application update, keep application development and production
+deployment as separate responsibilities.
 
-### 1. Update local code
+## Application developer
+
+Before starting work:
 
 ```bash
 git checkout main
 git pull origin main
 ```
 
-### 2. Make changes
-
-### 3. Test locally
+Make the required changes and test locally.
 
 For example:
 
@@ -749,34 +832,44 @@ docker compose up --build
 
 Run the relevant application tests and manually verify the affected functionality.
 
-### 4. Check the diff
+Review the changes:
 
 ```bash
 git status
 git diff
 ```
 
-### 5. Commit
+Commit and push the changes:
 
 ```bash
 git add .
 git commit -m "Describe the change"
-```
-
-### 6. Push
-
-```bash
 git push origin main
 ```
 
-### 7. Pull the same commit on the deployment machine
+For larger changes, preferably use a feature branch and merge into `main`.
+
+## Deployment owner
+
+After the application change has been pushed:
 
 ```bash
 git checkout main
 git pull origin main
 ```
 
-### 8. Build images
+Verify the commit:
+
+```bash
+git rev-parse --short HEAD
+```
+
+Only then build the Docker image.
+
+The deployment owner must deploy the commit currently present on
+`origin/main`, rather than an older local checkout or an unrelated branch.
+
+### Build images
 
 Use:
 
@@ -786,11 +879,11 @@ TAG=$(git rev-parse --short HEAD)
 
 Build and push the API and/or frontend image.
 
-### 9. Deploy to Cloud Run
+### Deploy to Cloud Run
 
 Deploy only the service that changed.
 
-### 10. Smoke test
+### Smoke test
 
 Verify:
 
@@ -804,7 +897,7 @@ Logs
 
 ---
 
-# 24. Deploying Only One Service
+# 25. Deploying Only One Service
 
 If only the backend changes:
 
@@ -836,7 +929,7 @@ There is no need to rebuild the API.
 
 ---
 
-# 25. Image Tagging
+# 26. Image Tagging
 
 The preferred tag is the Git commit SHA:
 
@@ -847,7 +940,7 @@ TAG=$(git rev-parse --short HEAD)
 For example:
 
 ```text
-4e10284
+<git-commit-sha>
 ```
 
 This makes it possible to identify exactly which source revision produced a production image.
@@ -862,7 +955,7 @@ Commit-based tags provide a clear deployment history.
 
 ---
 
-# 26. Current Production URLs
+# 27. Current Production URLs
 
 API:
 
@@ -880,7 +973,7 @@ These URLs may change if the architecture is changed.
 
 ---
 
-# 27. Current Production Service Account
+# 28. Current Production Service Account
 
 Cloud Run runtime service account:
 
@@ -904,7 +997,7 @@ Do not replace this account with a personal user account.
 
 ---
 
-# 28. Important Security Rules
+# 29. Important Security Rules
 
 Never commit:
 
@@ -929,7 +1022,7 @@ Use Secret Manager for production secrets.
 
 ---
 
-# 29. Troubleshooting
+# 30. Troubleshooting
 
 ## API returns 500 and database tables do not exist
 
@@ -1033,7 +1126,7 @@ The latter can cause Cloud Run requests to loop back to the frontend service.
 
 ---
 
-# 30. Production Deployment Checklist
+# 31. Production Deployment Checklist
 
 Before deployment:
 
@@ -1041,6 +1134,9 @@ Before deployment:
 [ ] git status is clean or expected changes are committed
 [ ] correct main branch
 [ ] latest main pulled
+[ ] working tree contains only expected changes
+[ ] no local commits exist that are not on origin/main
+[ ] deployment commit verified with git rev-parse --short HEAD
 [ ] local tests pass
 [ ] Docker build succeeds
 [ ] image tag matches Git commit
@@ -1083,9 +1179,11 @@ After deployment:
 [ ] production application manually verified
 ```
 
+Never force-push `main` as part of the normal development or deployment process.
+
 ---
 
-# 31. What This Deployment Does Not Use
+# 32. What This Deployment Does Not Use
 
 The current production process does **not** depend on:
 
@@ -1110,7 +1208,18 @@ Cloud Run
 
 ---
 
-# 32. Final Reference
+# 33. Final Reference
+
+Before using the commands below, make sure the repository is on the intended
+production commit:
+
+```bash
+git checkout main
+git pull origin main
+git rev-parse --short HEAD
+```
+
+Use that commit SHA as `TAG`.
 
 ## API
 
