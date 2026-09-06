@@ -196,6 +196,7 @@ Users may belong to multiple tenants via `tenant_memberships`.
 
 ## Documentation
 
+- [`docs/SOFTWARE.md`](docs/SOFTWARE.md) — **full technical reference**: architecture, data model, every module, the Contract Reader pipeline, translation, auth, deployment
 - [`docs/PRD.md`](docs/PRD.md) — product requirements + 20-day timeline
 - [`docs/DESIGN.md`](docs/DESIGN.md) — architecture notes
 - [`docs/RIGHTS_GUIDE_CONTENT_GUIDELINES.md`](docs/RIGHTS_GUIDE_CONTENT_GUIDELINES.md) — the 8 rules every fact card follows
