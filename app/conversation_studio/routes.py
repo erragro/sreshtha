@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth.dependencies import db_session_dep, get_current_active_user
+from app.config import settings
 from app.conversation_studio.schemas import (
     BusinessUnitTree,
     ChatStartersResponse,
@@ -33,6 +34,14 @@ from app.sessions.routes import _load_owned_session
 router = APIRouter(prefix="/api/chat", tags=["chat-starters"])
 
 
+def _require_chatbot_enabled() -> None:
+    if not settings.chatbot_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sahaayak is temporarily unavailable while worker-rights content is completed.",
+        )
+
+
 @router.get("/starters", response_model=ChatStartersResponse)
 def get_starters(
     _user: Annotated[User, Depends(get_current_active_user)],
@@ -43,6 +52,7 @@ def get_starters(
     Any authenticated user gets this — access-control is at the module
     level (chatbot module access), not the individual BU/issue type.
     """
+    _require_chatbot_enabled()
     units = db.execute(
         select(BusinessUnit)
         .options(selectinload(BusinessUnit.issue_types))
@@ -110,6 +120,7 @@ def select_issue(
        resolved (frontend uses this to decide whether to prompt the
        customer for missing inputs like an order id).
     """
+    _require_chatbot_enabled()
     session: ChatSession = _load_owned_session(db, session_id, user)
 
     issue_type: IssueType | None = load_issue_type_full(db, body.issue_type_id)

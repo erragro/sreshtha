@@ -497,8 +497,9 @@ def get_provider(language: str = "en", provider: str | None = None) -> LLMProvid
       - Stage 1 (extract) explicitly uses OpenAI ``gpt-4o-mini`` — see
         ``app/contracts/stage1.py``.
       - Stage 2 (annotate) explicitly uses OpenAI ``gpt-4o`` + RAG.
-      - Stage 3 (rewrite) explicitly uses Vertex AI Gemini for warmer
-        tone before Mayura translation — see ``app/contracts/stage3.py``.
+      - Stage 3 (rewrite) follows ``LLM_PROVIDER`` (OpenAI by default),
+        just like the other contract stages. This keeps one configured
+        reasoning provider across the complete contract pipeline.
       - Cardinal chat pipeline defaults follow ``LLM_PROVIDER`` env var
         (default OpenAI).
       - Sarvam Mayura owns Indic translation regardless.

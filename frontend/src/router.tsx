@@ -4,7 +4,6 @@ import { AppShell } from "@/components/AppShell"
 import { AuthGuard } from "@/components/AuthGuard"
 import { ModuleGuard } from "@/components/ModuleGuard"
 import { AdminPage } from "@/pages/AdminPage"
-import { ChatPage } from "@/pages/ChatPage"
 import { ContractDetailPage } from "@/pages/ContractDetailPage"
 import { ContractReaderPage } from "@/pages/ContractReaderPage"
 import { ConversationStudioPage } from "@/pages/ConversationStudioPage"
@@ -30,16 +29,10 @@ export const router = createBrowserRouter([
           // Home — no module check, every authenticated user gets here.
           { index: true, element: <HomePage /> },
 
-          // Chatbot — inside the /chat namespace, requires 'chatbot'
-          // module access (any level).
-          {
-            path: "chat",
-            element: <ModuleGuard moduleKey="chatbot" />,
-            children: [
-              { index: true, element: <ChatPage /> },
-              { path: ":sessionId", element: <ChatPage /> },
-            ],
-          },
+          // Sahaayak is intentionally unavailable until the inherited
+          // food-delivery chat pipeline is fully retargeted and tested for
+          // worker-rights use. Keep old bookmarks safe and non-billable.
+          { path: "chat/*", element: <Navigate to="/" replace /> },
 
           // Contract Reader — upload list + clause-by-clause viewer.
           //   /contracts             — upload zone + list

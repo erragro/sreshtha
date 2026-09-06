@@ -130,6 +130,9 @@ export function ContractDetailPage() {
         // Present when Mayura translated the English source. When null
         // (translation failed), we fall back to the English rendered.
         rendered: Rendered[] | null
+        // Translated top_summary + top_actions. Null when there was
+        // nothing to translate or the target is English.
+        overview?: { top_summary?: string | null; top_actions?: string[] } | null
         translator?: string
         fallback_clause_ids?: string[]
         error?: string | null
@@ -156,6 +159,11 @@ export function ContractDetailPage() {
   const renderedById = new Map(
     displayedRendered.map((r) => [r.clause_id, r]),
   )
+
+  // Prefer the translated overview (top_summary + top_actions) when Mayura
+  // produced one; otherwise show the English overview from Stage 3.
+  const overview =
+    (usingTranslation && translation?.overview) || stages.stage_3?.overview
 
   const isProcessing = contract.status !== "ready" && contract.status !== "failed"
   const isFailed = contract.status === "failed"
@@ -278,13 +286,13 @@ export function ContractDetailPage() {
         </div>
       )}
 
-      {stages.stage_3?.overview?.top_summary && (
+      {overview?.top_summary && (
         <Card className="mt-4 border-brand-200 bg-brand-50/40 dark:border-brand-900/40 dark:bg-brand-900/10">
           <CardContent className="space-y-3 p-4 text-sm">
-            <p className="font-medium">{stages.stage_3.overview.top_summary}</p>
-            {(stages.stage_3.overview.top_actions ?? []).length > 0 && (
+            <p className="font-medium">{overview.top_summary}</p>
+            {(overview.top_actions ?? []).length > 0 && (
               <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-                {stages.stage_3.overview.top_actions!.map((action, index) => (
+                {overview.top_actions!.map((action, index) => (
                   <li key={`${index}-${action}`}>{action}</li>
                 ))}
               </ul>

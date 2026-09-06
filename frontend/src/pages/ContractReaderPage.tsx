@@ -27,7 +27,19 @@ import type { ContractStatus, ContractSummary, TargetLanguage, TargetScript, Tra
 
 
 const MAX_MB = 10
-const ACCEPTED = ".pdf,.jpg,.jpeg,.png"
+const ACCEPTED = ".pdf,.jpg,.jpeg,.png,.txt,.docx"
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+// MIME types a browser might report for our accepted formats. Some OSes send
+// an empty or generic type for .txt/.docx, so we also accept by extension.
+const OK_MIMES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "text/plain",
+  DOCX_MIME,
+])
+const OK_EXTENSIONS = /\.(pdf|jpe?g|png|txt|docx)$/i
 
 // v0.1 Contract Reader scope: Hindi + Bengali only. The two languages
 // with the largest gig-worker footprint per the PRD's persona coverage
@@ -109,9 +121,10 @@ export function ContractReaderPage() {
   // because it's the widest-reach language in the target audience.
   const [targetLanguage, setTargetLanguage] = useState<TargetLanguage>("hi")
   const targetScript: TargetScript = "native"
-  // EasyOCR needs to know which Indic script to load. Platform agreements
-  // are often English, so that is the intentional default rather than an
-  // unverified language guess.
+  // Tells the OCR engine which language data to load for a photo/scan.
+  // Platform agreements are usually English, so that is the intentional
+  // default rather than an unverified language guess. Ignored for text,
+  // .docx, and born-digital PDFs, which carry their own encoding.
   const [sourceLanguage, setSourceLanguage] = useState<TargetLanguage>("en")
   // Mayura register/tone. Default 'formal' — pure Hindi/Bengali/etc.
   // Explicit opt-in for Hinglish-style code-mixing.
@@ -129,9 +142,9 @@ export function ContractReaderPage() {
       toast.error(`File too large. Max ${MAX_MB} MB.`)
       return
     }
-    const okMimes = ["application/pdf", "image/jpeg", "image/png"]
-    if (!okMimes.includes(file.type)) {
-      toast.error("Please upload a PDF, JPG, or PNG.")
+    const typeOk = OK_MIMES.has(file.type) || OK_EXTENSIONS.test(file.name)
+    if (!typeOk) {
+      toast.error("Please upload a PDF, Word (.docx), text, JPG, or PNG file.")
       return
     }
     if (!processingConsent) {
@@ -284,8 +297,9 @@ export function ContractReaderPage() {
         />
         <span>
           I understand that Sreshtha will send extracted contract text and
-          derived clauses to OpenAI, Google Vertex AI, and Sarvam to create
-          this reading. I should remove personal details I do not want shared.
+          derived clauses to its configured AI providers (OpenAI and Sarvam by
+          default) to create this reading. I should remove personal details I
+          do not want shared.
         </span>
       </label>
 
@@ -319,7 +333,7 @@ export function ContractReaderPage() {
             : "Drop a contract here, or click to choose a file"}
         </div>
         <div className="text-xs text-muted-foreground">
-          PDF, JPG, or PNG. Max {MAX_MB} MB.
+          PDF, Word (.docx), text, JPG, or PNG. Max {MAX_MB} MB.
         </div>
         <input
           ref={inputRef}
@@ -429,8 +443,9 @@ export function ContractReaderPage() {
 
       <div className="mt-12 border-t pt-6 text-xs text-muted-foreground">
         We extract text on our server, then send the extracted text and derived
-        clauses to OpenAI, Google Vertex AI, and Sarvam to prepare this reading
-        and translation. Your original file remains private to your account.
+        clauses to the configured AI providers (OpenAI and Sarvam by default) to
+        prepare this reading and translation. Your original file remains private
+        to your account.
       </div>
     </div>
   )

@@ -12,16 +12,24 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         postgresql \
         postgresql-contrib \
+        tesseract-ocr \
+        tesseract-ocr-hin \
+        tesseract-ocr-ben \
+        tesseract-ocr-tam \
+        tesseract-ocr-tel \
+        tesseract-ocr-kan \
+        tesseract-ocr-mar \
+        libpq5 \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install .
+RUN pip install --upgrade pip \
+ && pip install --no-compile .
 
 COPY app ./app
 COPY data ./data
-COPY policy_and_faq.md ./policy_and_faq.md
 COPY cloudrun-entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 

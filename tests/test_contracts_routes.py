@@ -177,6 +177,88 @@ def test_upload_accepts_jpeg(client: TestClient):
     assert r.status_code == 201
 
 
+_DOCX_MIME = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+
+
+def _docx_bytes(text: str = "Clause 1. The worker is an independent contractor.") -> bytes:
+    """A minimal but structurally valid .docx (zip with document.xml)."""
+    import io
+    import zipfile
+
+    body = (
+        '<?xml version="1.0"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr("word/document.xml", body)
+    return buf.getvalue()
+
+
+def test_upload_accepts_plain_text(client: TestClient):
+    _, token = _new_user(client)
+    r = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("agreement.txt", b"Clause 1. No minimum pay is guaranteed.", "text/plain")},
+        data={"target_language": "en"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["mime_type"] == "text/plain"
+
+
+def test_upload_accepts_docx(client: TestClient):
+    _, token = _new_user(client)
+    r = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("agreement.docx", _docx_bytes(), _DOCX_MIME)},
+        data={"target_language": "en"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["mime_type"] == _DOCX_MIME
+
+
+def test_upload_recovers_docx_from_extension_when_type_is_generic(client: TestClient):
+    """Some OSes send application/octet-stream for .docx — recover by extension."""
+    _, token = _new_user(client)
+    r = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("agreement.docx", _docx_bytes(), "application/octet-stream")},
+        data={"target_language": "en"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["mime_type"] == _DOCX_MIME
+
+
+def test_upload_rejects_docx_with_non_zip_content(client: TestClient):
+    _, token = _new_user(client)
+    r = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("fake.docx", b"this is not a zip", _DOCX_MIME)},
+        data={"target_language": "en"},
+    )
+    assert r.status_code == 415
+    assert "do not match" in r.json()["detail"]
+
+
+def test_upload_rejects_binary_renamed_to_txt(client: TestClient):
+    _, token = _new_user(client)
+    r = client.post(
+        "/api/contracts",
+        headers=_auth(token),
+        files={"file": ("sneaky.txt", b"\x00\x01\x02binary\x00payload", "text/plain")},
+        data={"target_language": "en"},
+    )
+    assert r.status_code == 415
+
+
 def test_process_requires_recorded_consent_and_reserves_the_job(client: TestClient):
     _, token = _new_user(client)
     upload = client.post(
