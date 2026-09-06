@@ -1,7 +1,7 @@
 [project]
 name = "sreshtha"
 version = "0.1.0"
-description = "Sreshtha — a mobile-responsive web app for India's gig workers. Contract explanations, rights guidance, welfare access, in the worker's language. Built on Google Gemini + Sarvam Mayura."
+description = "Sreshtha — a mobile-responsive web app for India's gig workers. Contract explanations, rights guidance, welfare access, in the worker's language. Built on OpenAI + Sarvam Mayura (Vertex AI Gemini optional)."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
