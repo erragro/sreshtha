@@ -68,7 +68,7 @@ roadmap work, not live features.
 sreshtha/
 ├── app/                          FastAPI backend
 │   ├── auth/                     Users, JWT, password hashing
-│   ├── contracts/                Contract Reader — OCR + 3-stage LLM + Mayura
+│   ├── contracts/                Contract Reader — OCR + 3-stage LLM (OpenAI) + Mayura
 │   ├── rights/                   Rights Guide — fact-card API
 │   ├── schemes/                  Schemes Finder — wizard + eligibility matcher
 │   ├── idioms/                   Idiom library admin
@@ -81,7 +81,7 @@ sreshtha/
 │   ├── db.py, models.py          SQLAlchemy 2 async session + all ORM models
 │   ├── main.py                   FastAPI app entrypoint
 │   └── config.py                 Pydantic Settings — reads .env
-├── alembic/versions/             Database migrations, ordered 001-012
+├── alembic/versions/             Database migrations, ordered 001-016
 ├── frontend/                     React 19 + Vite + Tailwind v4 + shadcn/ui
 ├── scripts/                      One-shot helpers (bootstrap tenant, translation runs)
 ├── docs/                         PRD, design notes, content guidelines
@@ -94,13 +94,13 @@ sreshtha/
 worker upload → POST /api/contracts
         │
         ├─► app/contracts/service.py         validate + save + row insert
-        ├─► app/contracts/storage.py         local disk (Cloud Storage on prod)
+        ├─► app/contracts/storage.py         local disk (dev) / Google Cloud Storage (prod)
         ├─► app/contracts/processor.py       status machine + orchestration
         │       │
         │       ├─► app/contracts/ocr.py     text layer / .docx / Tesseract OCR
-        │       ├─► app/contracts/stage1.py  configured LLM · extract clauses
-        │       ├─► app/contracts/stage2.py  configured LLM · annotate + risk tier
-        │       ├─► app/contracts/stage3.py  configured LLM · rewrite for worker
+        │       ├─► app/contracts/stage1.py  OpenAI gpt-4o-mini (→ gpt-4o) · extract clauses
+        │       ├─► app/contracts/stage2.py  OpenAI gpt-4o + pgvector RAG · annotate + risk tier
+        │       ├─► app/contracts/stage3.py  OpenAI gpt-4o-mini/gpt-4o · rewrite for worker
         │       └─► app/contracts/translate.py  Sarvam Mayura, chunked
         │              │
         │              ├─► app/translate/idioms.py   substitute BEFORE Mayura
@@ -133,11 +133,13 @@ npm run dev                            # http://localhost:5173
 **Env.** Copy `.env.example` → `.env`, fill:
 
 - `DATABASE_URL` — Postgres connection string
-- One of:
-  - `GEMINI_API_KEY` (Google AI Studio, fastest to iterate)
-  - `GOOGLE_APPLICATION_CREDENTIALS` + `GOOGLE_CLOUD_PROJECT` (Vertex AI, production)
+- `OPENAI_API_KEY` — reasoning provider (the default). `OPENAI_FAST_MODEL` /
+  `OPENAI_SMART_MODEL` default to `gpt-4o-mini` / `gpt-4o`
 - `SARVAM_API_KEY` — for Sarvam Mayura translation
 - `JWT_SECRET` — any random 256-bit string
+- Optional: `LLM_PROVIDER=vertex` + `GOOGLE_CLOUD_PROJECT` + a service-account
+  key routes **Stage 3 generation only** through Vertex AI Gemini instead of
+  OpenAI. Not used by the hosted deployment.
 
 ## Content translation
 
@@ -155,21 +157,38 @@ land translations at `is_active=true` so the app renders, but production
 sign-off requires the checklist in
 [docs/RIGHTS_GUIDE_CONTENT_GUIDELINES.md](docs/RIGHTS_GUIDE_CONTENT_GUIDELINES.md).
 
-## Google tech stack
+## Model & infrastructure stack
 
-| In production | Where used |
-|---------------|------------|
-| Gemini 2.5 Flash | Contract Reader — all three reasoning stages, English only |
-| Gemini 2.5 Flash Lite | Language detection, lighter classification |
-| Vertex AI | Hosts both Gemini models (region `asia-south1`) |
-| Google AI Studio | Alternate auth path for local dev |
-| `google-genai` SDK v1.0+ | Python client |
+**Reasoning (Contract Reader), as deployed:**
 
-| On the roadmap | Purpose |
-|----------------|---------|
-| Cloud Run | Production deploy of API + built frontend |
-| Cloud Storage | Encrypted at-rest storage of uploaded contracts |
-| Gemini Vision | Fallback OCR for low-quality photos in rare scripts (Tesseract is the current engine) |
+| Stage | Model |
+|-------|-------|
+| Stage 1 — extract clauses | OpenAI `gpt-4o-mini`, retries on `gpt-4o` |
+| Stage 2 — annotate + risk tier | OpenAI `gpt-4o`, grounded on the statute corpus via pgvector retrieval |
+| Stage 3 — classify clauses / rewrite for the worker | OpenAI `gpt-4o-mini` / `gpt-4o` |
+| RAG embeddings | OpenAI `text-embedding-3-large` (1024-dim) |
+| Indic translation | Sarvam Mayura (`hi`, `bn`); other Indian languages via Sarvam `sarvam-105b` |
+| OCR (photos / scanned PDFs) | Tesseract, on our own servers — raw images never leave |
+
+Reasoning runs in English; the worker-facing text is translated afterward.
+
+**Optional Gemini path.** Stage 3 generation is the one stage wired to
+`LLM_PROVIDER`. Setting `LLM_PROVIDER=vertex` (plus `GOOGLE_CLOUD_PROJECT`
+and Application Default Credentials) routes it through Vertex AI
+Gemini 2.5 Flash. The hosted deployment runs `LLM_PROVIDER=openai`, so
+Gemini is not in the production path. The AI Studio bare-key
+(`GEMINI_API_KEY`) path has been removed; Vertex is the only Gemini route.
+
+**Google Cloud infrastructure, in production:**
+
+| Component | Purpose |
+|-----------|---------|
+| Cloud Run (`asia-south1`) | API + built frontend |
+| Cloud SQL — Postgres 16 + pgvector | Application database + RAG vector store |
+| Cloud Storage | Uploaded contracts (encrypted at rest) |
+
+**Roadmap:** Gemini Vision as a fallback OCR engine for low-quality photos
+in rarer scripts.
 
 ## Multi-tenant deployment (for partners)
 
@@ -212,9 +231,9 @@ cd frontend && npm run lint   # frontend lint
 ## License
 
 Proprietary — [all rights reserved](LICENSE), © 2026 Surajit Chaudhuri.
-The repository is public so that Google Meet the Builders (Gen AI
-Academy APAC) judges can review the submission. Public availability
-does not imply an open-source license.
+The repository is public so that hackathon and accelerator judges can
+review the submission. Public availability does not imply an
+open-source license.
 
 For partnership, licensing, or research-use inquiries, contact the
 copyright holder.
