@@ -78,9 +78,9 @@ PDF / JPEG / PNG upload
 
 | Area | Implementation |
 |---|---|
-| File handling | PDF, JPEG, PNG; configured 10 MB ceiling; MIME signature checks; source-language hint |
+| File handling | PDF, `.docx`, plain text, JPEG, PNG; configured 10 MB ceiling; MIME signature checks (with filename-extension recovery for generic content types); source-language hint |
 | Storage | `LocalStorage` for development; `GCSStorage` when the configured root is `gs://...` |
-| OCR | PyMuPDF embedded-text extraction before EasyOCR fallback; PDF/raster resource limits |
+| Text extraction | born-digital PDF text layer (PyMuPDF) and `.docx` run text (stdlib zip + regex) need no OCR; photos and scanned PDFs go through Tesseract (`eng` + the named Indic language); PDF/raster resource limits throughout |
 | Stage 1 | OpenAI `gpt-4o-mini` structured extraction of clauses and metadata |
 | Stage 2 | OpenAI `gpt-4o` and pgvector retrieval of curated statutes; jurisdiction guard removes mismatched state-law citations |
 | Stage 3 | Vertex AI Gemini English rendition, clause-rule library, deterministic validator, safe fallback |
@@ -181,13 +181,15 @@ Detailed setup commands and environment variables are in [README.md](../README.m
 
 ## 8. Verification
 
-Recent local validation completed:
+Required local validation for a release:
 
-- 182 backend tests passed in the full pytest suite.
-- Vite production build completed successfully.
-- A 20-page PDF completed the full Contract Reader pipeline in English,
-  Hindi, Bengali, and Tamil test modes, with no provider errors or leaked
-  idiom marker.
+- Run the full backend suite and the Vite production build.
+- Run a real PDF and photographed-contract flow through the running stack in
+  English, Hindi, and Bengali. Verify that every ready clause has a worker
+  explanation, that OCR loads successfully, and that no fallback/error string
+  is sent to translation.
+- Exercise the disabled Sahaayak endpoint and verify it returns a clear 503
+  without invoking an LLM.
 
 The Vite build emits a non-failing advisory for a JavaScript chunk larger than
 the default 500 kB threshold.

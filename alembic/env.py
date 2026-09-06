@@ -25,7 +25,9 @@ from app.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which silently kills every
+    # logger the app already configured (see app/main._configure_app_logging).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Never trust alembic.ini's sqlalchemy.url — always take runtime URL.
 config.set_main_option("sqlalchemy.url", settings.database_url)

@@ -7,18 +7,17 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# Tesseract OCR engine + Indic language data (used by app/contracts/ocr.py
+# for photos/scans). libpq5 for psycopg. No torch/CUDA: the OCR engine is
+# the C++ tesseract binary, so the image stays small and behaves the same
+# on x86 and ARM.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr tesseract-ocr-hin tesseract-ocr-ben tesseract-ocr-tam \
     tesseract-ocr-tel tesseract-ocr-kan tesseract-ocr-mar \
     libpq5 \
  && rm -rf /var/lib/apt/lists/*
 
-# Install torch (~200MB CPU wheel) in its own layer. Doing this before the
-# main pip resolve keeps the peak-memory spike per RUN below Docker Desktop's
-# 8GB default; a single monolithic pip install of easyocr + scikit-image +
-# scipy + torch has OOM'd historically (SIGKILL / exit 137).
-RUN pip install --upgrade pip \
- && pip install --no-compile torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --upgrade pip
 
 COPY pyproject.toml ./
 RUN pip install --no-compile .

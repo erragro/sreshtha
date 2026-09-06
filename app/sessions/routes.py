@@ -24,6 +24,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import db_session_dep, get_current_active_user
+from app.config import settings
 from app.l1_cardinal.pipeline import run_turn
 from app.models import ChatSession, Turn, User
 from app.sessions.schemas import (
@@ -38,6 +39,19 @@ from app.sessions.schemas import (
 
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+
+
+def _require_chatbot_enabled() -> None:
+    """Prevent the known legacy pipeline from silently consuming LLM quota."""
+    if not settings.chatbot_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Sahaayak is temporarily unavailable while its worker-rights "
+                "content is being completed. Please use Contract Reader, Rights "
+                "Guide, or Schemes Finder."
+            ),
+        )
 
 
 def _new_session_id() -> str:
@@ -165,6 +179,7 @@ def chat(
     Session must exist and be owned by the current user (or be brand-new
     with no turns yet — created via POST /api/sessions).
     """
+    _require_chatbot_enabled()
     session = _load_owned_session(db, session_id, user)
 
     # Auto-title from the first message so the sidebar isn't full of "Untitled".

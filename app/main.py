@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -35,10 +36,35 @@ from app.modules.routes import router as modules_router
 from app.sessions.routes import router as sessions_router
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+def _configure_app_logging() -> None:
+    """Give the ``app`` logger tree its own stdout handler at INFO.
+
+    Uvicorn configures logging (via ``dictConfig``) around app import and only
+    touches the ``uvicorn*`` loggers, leaving root at WARNING with no handler —
+    so ``basicConfig`` here is a no-op and our INFO-level pipeline diagnostics
+    never reach stdout in Docker. Rather than fight uvicorn over root, we own
+    the ``app.*`` subtree outright. Idempotent, and called again from the
+    startup hook so it wins no matter what order uvicorn does things in.
+    """
+    app_logger = logging.getLogger("app")
+    app_logger.setLevel(logging.INFO)
+    app_logger.disabled = False
+    app_logger.propagate = False
+    # Drop any handler we added on a previous call — uvicorn can replace
+    # sys.stdout between import time and the startup hook, which would leave
+    # an earlier handler writing to a dead stream — then add a fresh one
+    # bound to the current stdout.
+    for stale in [h for h in app_logger.handlers if getattr(h, "_sreshtha", False)]:
+        app_logger.removeHandler(stale)
+    handler = logging.StreamHandler(sys.stdout)
+    handler._sreshtha = True
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"),
+    )
+    app_logger.addHandler(handler)
+
+
+_configure_app_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -90,11 +116,23 @@ def _startup() -> None:
             )
         logger.warning("using default JWT secret — safe for local dev only")
 
+    loaded = None
+    boot_error: Exception | None = None
     try:
         loaded = bootstrap.run()
+    except Exception as exc:  # noqa: BLE001
+        boot_error = exc
+    # Alembic's env.py calls logging.config.fileConfig(), which disables every
+    # existing logger and drops root to WARN. Re-assert our config once
+    # migrations are done so INFO diagnostics survive into request handling.
+    _configure_app_logging()
+    if boot_error is None:
         logger.info("bootstrap %s", loaded)
-    except Exception:
-        logger.exception("bootstrap failed — service will serve /ping but runs will error")
+    else:
+        logger.error(
+            "bootstrap failed — service will serve /ping but runs will error",
+            exc_info=boot_error,
+        )
 
 
 @app.get("/ping")
@@ -156,11 +194,22 @@ def run_prod(
 # from the sessions router instead.
 
 
+# /score and /simulator/* are the internal simulator/eval surface, not part
+# of the worker-facing product. Auth-guard them so an anonymous request gets
+# a clean 401 rather than a 500 out of the simulator client.
+
+
 @app.get("/score")
-def score() -> dict:
-    return simulator_client.candidate_summary()
+def score(_user: User = Depends(get_current_active_user)) -> dict:
+    try:
+        return simulator_client.candidate_summary()
+    except Exception as exc:  # noqa: BLE001 — never 500 on a diagnostics route
+        raise HTTPException(status_code=502, detail=f"simulator unavailable: {exc}")
 
 
 @app.get("/simulator/healthz")
-def simulator_healthz() -> dict:
-    return simulator_client.healthz()
+def simulator_healthz(_user: User = Depends(get_current_active_user)) -> dict:
+    try:
+        return simulator_client.healthz()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"simulator unavailable: {exc}")

@@ -7,9 +7,9 @@ rendition. For each clause, produces three pieces of English text:
   - action       Concrete step to take, or null if nothing.
 
 Output is always English. Translation to the worker's target language
-happens in a separate pass via Sarvam Mayura (see translate.py) —
-Gemini is smartest + fastest reasoning in English, Mayura is the
-purpose-built Indic translator. Two providers, two responsibilities.
+happens in a separate pass via Sarvam Mayura (see translate.py). The rewrite
+uses the configured reasoning provider (OpenAI by default); Mayura is the
+purpose-built Indic translator.
 
 The viewer joins this Stage 3 output back against Stage 1 (for the
 original clause text, kept verbatim in whatever language the contract
@@ -38,6 +38,11 @@ from app.l2_agents.llm_provider import get_provider
 
 
 logger = logging.getLogger(__name__)
+
+
+def _get_generator_provider():
+    """Resolve the Stage 3 generator from the deployment provider setting."""
+    return get_provider("en")
 
 
 _SYSTEM_RENDER_ONLY = """You are producing a worker-friendly rendition of a contract in English.
@@ -212,7 +217,10 @@ def synthesise(
     )
 
     # Step 3: per-clause rendering + validation, chunked in parallel.
-    generator = get_provider("en", provider="vertex")
+    # Do not pin this stage to Vertex: a standard local deployment uses
+    # OpenAI unless the operator explicitly selects Vertex via LLM_PROVIDER.
+    # Pinning it made every rewrite fail when no GCP credentials were present.
+    generator = _get_generator_provider()
     chunks: list[list[dict[str, Any]]] = [
         clauses[i : i + _STAGE3_CHUNK_SIZE]
         for i in range(0, len(clauses), _STAGE3_CHUNK_SIZE)

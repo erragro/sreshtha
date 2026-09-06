@@ -8,6 +8,15 @@ import { iconFor } from "@/lib/icons"
 import { cn } from "@/lib/utils"
 import { useAuthStore } from "@/stores/auth"
 
+// These rows exist in the module registry for administrative planning, but
+// are not worker-ready. Do not expose a broken chat pipeline or a route that
+// does not exist as a worker-facing tool.
+const WORKER_READY_MODULES = new Set([
+  "contract_reader",
+  "rights_guide",
+  "schemes_finder",
+])
+
 /**
  * Global left-hand navigation.
  *
@@ -25,7 +34,9 @@ export function MainSidebar() {
   const user = useAuthStore((s) => s.user)
   const { data: modules = [] } = useModules()
 
-  const visibleModules = modules.filter((m) => m.access_level !== null)
+  const visibleModules = modules.filter(
+    (m) => m.access_level !== null && WORKER_READY_MODULES.has(m.key),
+  )
 
   return (
     <aside className="flex h-full w-16 shrink-0 flex-col items-center border-r bg-sidebar py-3 text-sidebar-foreground md:w-56 md:items-stretch md:px-2">

@@ -23,13 +23,16 @@ dependencies = [
     "slowapi>=0.1.9",
     # Contract Reader multipart/form-data file uploads (FastAPI dep).
     "python-multipart>=0.0.20",
-    # Contract Reader OCR — in-house Indic OCR (EasyOCR + PyMuPDF for PDF
-    # page rendering) instead of Gemini vision. Worker document text stays
-    # on our infrastructure, no per-call cost, story for "built for India".
-    # PyMuPDF is pure-Python (wheel), EasyOCR pulls in torch (~500MB
-    # CPU wheel). Language models download on first Reader init (~100MB
-    # per language pair).
-    "easyocr>=1.7",
+    # Contract Reader text extraction — local, no per-call cost, no vendor
+    # dependency. Tesseract (via pytesseract) is the OCR engine for
+    # photos/scans; its binary + Indic language data ship in the Docker
+    # image, so there is no model download on first use. PyMuPDF reads a
+    # born-digital PDF's text layer and rasterises scanned pages; Pillow
+    # decodes uploaded images. .docx is unzipped in-process (stdlib).
+    # (Replaces the earlier EasyOCR/torch stack, which produced garbled
+    # output on the ARM64 build and pulled ~1GB of wheels + runtime model
+    # downloads.)
+    "pytesseract>=0.3.10",
     "PyMuPDF>=1.24",
     "Pillow>=10.0",
     # Idiom library — Aho-Corasick multi-pattern matcher for scanning

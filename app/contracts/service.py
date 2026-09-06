@@ -13,6 +13,7 @@ this service handles only the upload transaction.
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Optional
 
@@ -21,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.contracts.ocr import DOCX_MIME
 from app.contracts.storage import Storage, build_key, make_storage
 from app.models import UploadedContract, User
 
@@ -29,19 +31,35 @@ from app.models import UploadedContract, User
 # Validation constants
 # ---------------------------------------------------------------------------
 
-# MIME whitelist. Kept small on purpose — Day 5's OCR (Gemini vision) is
-# reliable across these three; adding heic/heif requires extra handling
-# for Apple's iPhone-default format, which we'll layer on later.
+# MIME whitelist → storage-key extension. Covers the ways a worker realistically
+# has a contract: a photo/scan (JPG/PNG), a platform-exported PDF, a plain-text
+# copy pasted from an email, or a Word document. Old binary .doc is not
+# supported (needs a converter); .docx is.
 _ALLOWED_MIMES: dict[str, str] = {
     "application/pdf": "pdf",
     "image/jpeg": "jpg",
     "image/png":  "png",
+    "text/plain": "txt",
+    DOCX_MIME: "docx",
+}
+
+# Browsers and mobile OSes sometimes send an empty or generic content-type
+# for .txt and .docx. When that happens we recover the real type from the
+# filename extension, then still verify it by content signature below.
+_GENERIC_MIMES = {"", "application/octet-stream", "application/zip", "binary/octet-stream"}
+_EXT_TO_MIME: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".txt": "text/plain",
+    ".docx": DOCX_MIME,
 }
 
 # What the client sees when they upload something we can't handle.
 _MIME_ERROR = (
-    "unsupported file type. Please upload a PDF, JPG, or PNG "
-    "(max {mb} MB)."
+    "unsupported file type. Please upload a PDF, Word (.docx), text, "
+    "JPG, or PNG file (max {mb} MB)."
 )
 
 
@@ -141,7 +159,12 @@ async def upload_contract(
                 detail=f"source_language must be one of {sorted(_SUPPORTED_LANGUAGES)} or omitted",
             )
 
-    mime = (upload.content_type or "").lower()
+    mime = (upload.content_type or "").lower().strip()
+    if mime in _GENERIC_MIMES:
+        # No usable content-type — fall back to the filename extension. The
+        # signature check below still has to pass, so this can't be abused.
+        ext = os.path.splitext(upload.filename or "")[1].lower()
+        mime = _EXT_TO_MIME.get(ext, mime)
     if mime not in _ALLOWED_MIMES:
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -166,7 +189,7 @@ async def upload_contract(
     if not _matches_declared_mime(content, mime):
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="the file contents do not match the selected PDF, JPG, or PNG type",
+            detail="the file contents do not match its type",
         )
 
     # DB row first so we own the id we use for the storage key. If storage
@@ -288,11 +311,11 @@ def _sanitize_filename(name: str) -> str:
 
 
 def _matches_declared_mime(content: bytes, mime: str) -> bool:
-    """Cheap signature check before an untrusted document reaches OCR.
+    """Cheap signature check before an untrusted document reaches extraction.
 
-    This is deliberately a format gate, not a parser: PyMuPDF/Pillow remain
-    the authoritative decoders, while this rejects obvious spoofed MIME types
-    at the HTTP boundary.
+    This is deliberately a format gate, not a parser: PyMuPDF/Pillow/zipfile
+    remain the authoritative decoders, while this rejects obvious spoofed
+    MIME types at the HTTP boundary.
     """
     if mime == "application/pdf":
         return content.lstrip().startswith(b"%PDF-")
@@ -300,4 +323,25 @@ def _matches_declared_mime(content: bytes, mime: str) -> bool:
         return content.startswith(b"\xff\xd8\xff")
     if mime == "image/png":
         return content.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == DOCX_MIME:
+        # .docx is a ZIP container (PK\x03\x04, or PK\x05\x06 for an empty
+        # archive). The full Office-package check happens in extraction.
+        return content.startswith(b"PK\x03\x04") or content.startswith(b"PK\x05\x06")
+    if mime == "text/plain":
+        return _looks_like_text(content)
+    return False
+
+
+def _looks_like_text(content: bytes) -> bool:
+    """Accept a .txt upload only if it decodes as text and carries no NUL
+    bytes in its head — enough to reject a binary file renamed to .txt."""
+    head = content[:8192]
+    if b"\x00" in head:
+        return False
+    for encoding in ("utf-8", "utf-16", "cp1252"):
+        try:
+            head.decode(encoding)
+            return True
+        except (UnicodeDecodeError, LookupError):
+            continue
     return False

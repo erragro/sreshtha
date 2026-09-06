@@ -9,13 +9,19 @@ import { useModules } from "@/hooks/useModules"
 import { iconFor } from "@/lib/icons"
 import { useAuthStore } from "@/stores/auth"
 
+const WORKER_READY_MODULES = new Set([
+  "contract_reader",
+  "rights_guide",
+  "schemes_finder",
+])
+
 /**
  * Sreshtha landing for signed-in users.
  *
  * The frame: India has 7.7 crore gig workers, no product speaks their
  * language, and nobody translates the letter of the law into "here's
- * what to do this afternoon." Sreshtha is five modules that do exactly
- * that, on one shell.
+ * what to do this afternoon." The available tools focus on understanding
+ * a contract, rights information, and scheme discovery.
  *
  * Hero carries a bilingual wordmark (English + Devanagari), a tagline
  * that names the audience, and three pillar cards. Module cards below
@@ -25,7 +31,9 @@ import { useAuthStore } from "@/stores/auth"
 export function HomePage() {
   const user = useAuthStore((s) => s.user)
   const { data: modules = [] } = useModules()
-  const accessible = modules.filter((m) => m.access_level !== null)
+  const accessible = modules.filter(
+    (m) => m.access_level !== null && WORKER_READY_MODULES.has(m.key),
+  )
 
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-10">
@@ -53,8 +61,7 @@ export function HomePage() {
         <p className="max-w-2xl text-sm text-muted-foreground">
           Upload the contract you signed and see it explained clause by clause.
           Ask about your rights and get answers you can cite. Find the government
-          schemes you're already entitled to. Draft a complaint that actually
-          goes somewhere.
+          schemes you may qualify for.
         </p>
         {user?.is_super_admin && (
           <div className="pt-1 text-xs text-muted-foreground">
@@ -71,7 +78,7 @@ export function HomePage() {
         <PillarCard
           icon={<Languages className="size-5 text-brand-600" />}
           title="Language-first"
-          body="Hindi, Bengali, Tamil are first-class. English is a fallback, not the norm. Voice input on every field."
+          body="Contract explanations support English, Hindi, and Bengali. The rest of the interface and guide content currently use English while reviewed translations are published."
         />
         <PillarCard
           icon={<ShieldCheck className="size-5 text-brand-600" />}
@@ -81,7 +88,7 @@ export function HomePage() {
         <PillarCard
           icon={<FileText className="size-5 text-brand-600" />}
           title="From reading to action"
-          body="Read the contract, understand the clause, find the scheme, draft the complaint. One flow, one session."
+          body="Read the contract, understand the clause, learn your rights, and find relevant schemes in one place."
         />
       </div>
 

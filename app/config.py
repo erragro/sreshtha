@@ -96,7 +96,13 @@ class Settings(BaseSettings):
 
     # Newly signed-up users get 'view' access to these module keys by
     # default so the demo works out of the box. Comma-separated env var.
-    default_module_keys: str = "chatbot,contract_reader,rights_guide,schemes_finder,complaint_helper"
+    default_module_keys: str = "contract_reader,rights_guide,schemes_finder"
+
+    # The inherited Cardinal chatbot is not worker-safe until its food-delivery
+    # prompts, taxonomy and safety rules are replaced with Sreshtha content.
+    # Keep the legacy endpoints opt-in so a direct request cannot spend model
+    # quota on the known conservative-error fallback.
+    chatbot_enabled: bool = False
 
     # -- Contract Reader storage --------------------------------------------
     # Where uploaded contract files live. Local dev writes to a repo-relative

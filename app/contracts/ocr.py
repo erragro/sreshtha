@@ -1,42 +1,51 @@
-"""In-house OCR for uploaded contract files.
+"""Text extraction for uploaded contract files.
 
-Backed by EasyOCR (open-source, runs locally, PyTorch) and PyMuPDF (for
-PDF page rendering). Worker contracts stay on our infrastructure — no
-per-scan cost, no vendor dependency, and a real "built for India"
-story for the pitch. Swaps in for Gemini vision after the 2026-08-15
-architecture pivot.
+Handles five upload types:
 
-Language routing:
-  EasyOCR requires you to construct a Reader per language set, and
-  can only mix Latin (English) with one non-Latin script per reader
-  (Devanagari OR Bengali OR Tamil — not two together). We keep a
-  cache of readers by language tuple.
+  * ``application/pdf``  — read the born-digital text layer first (PyMuPDF);
+    fall back to rasterise-then-OCR for scanned/image-only PDFs.
+  * ``image/png`` / ``image/jpeg``  — OCR the image.
+  * ``text/plain``  — decode the bytes.
+  * ``.docx`` (``application/vnd.openxmlformats-officedocument.wordprocessingml.document``)
+    — pull the run text out of ``word/document.xml``.
 
-  Callers pass a source language hint (from the upload form). If the
-  worker picked 'auto' or left it blank, we default to ('en', 'hi') —
-  covers most Indian gig-worker contracts. If they picked a specific
-  Indic language, we spin up (or reuse) the matching reader.
+OCR engine
+----------
+Tesseract (via ``pytesseract``), not a neural engine. The system package
+plus the Indic language data (``eng hin ben tam tel kan mar``) ship in the
+Docker image, so there is no model download on first use and nothing to
+keep resident in memory. Tesseract is a C++ engine and behaves identically
+on x86 and ARM — the previous EasyOCR/torch stack produced garbled output
+on the ARM64 build.
 
-First-call cost:
-  Reader init downloads the language model (~100MB per language pair)
-  on first use, then caches to ~/.EasyOCR. Subsequent uploads reuse
-  the loaded reader instantly. Startup pre-warm is possible but not
-  yet wired — the first upload for each language pair takes a hit.
+Worker documents still never leave our infrastructure: extraction is local,
+per-scan cost is zero.
+
+Language routing
+----------------
+Callers pass a source-language hint from the upload form. Tesseract takes a
+``+``-joined language string; we always include ``eng`` so Latin script
+(numbers, section headers, English clauses in bilingual contracts) is
+recognised, and add the matching Indic model when the worker named one.
 """
 
 from __future__ import annotations
 
 import io
 import logging
-import threading
+import re
+import zipfile
 from dataclasses import dataclass
+from html import unescape
 from typing import Optional
 
-import numpy as np
 from PIL import Image
 
 
 logger = logging.getLogger(__name__)
+
+
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 # ---------------------------------------------------------------------------
@@ -55,102 +64,60 @@ class OCRResult:
 # Language routing
 # ---------------------------------------------------------------------------
 
-# EasyOCR uses its own language codes; almost always these match our BCP-47
-# short codes but a couple diverge (Marathi shares Devanagari with Hindi
-# via the 'mr' code; Assamese is 'as' but not in our target set).
-_SUPPORTED_INDIC = {"hi", "bn", "ta", "te", "kn", "mr"}
+# BCP-47 short code → Tesseract's traineddata name.
+_TESSERACT_LANG: dict[str, str] = {
+    "en": "eng",
+    "hi": "hin",
+    "bn": "ben",
+    "ta": "tam",
+    "te": "tel",
+    "kn": "kan",
+    "mr": "mar",
+}
 
 
-def _reader_langs_for(source_hint: Optional[str]) -> tuple[str, ...]:
-    """Which EasyOCR languages to load for a given source-language hint.
+def _tesseract_lang_for(source_hint: Optional[str]) -> str:
+    """Which Tesseract language string to use for a given source hint.
 
-    Every reader includes English so Latin script (numbers, section
-    headers, English clauses in bilingual contracts) is always recognised.
+    ``eng`` alone when the worker said the contract is English (or gave no
+    usable hint of an Indic script — most platform agreements are English).
+    ``eng+<indic>`` when they named a specific Indic language, so a
+    bilingual contract still reads on both scripts.
     """
     hint = (source_hint or "").lower().strip()
-    if hint in _SUPPORTED_INDIC and hint != "en":
-        return ("en", hint)
-    # 'en', 'auto', or unknown → default combo covers most Indian contracts.
-    return ("en", "hi")
+    indic = _TESSERACT_LANG.get(hint)
+    if indic and indic != "eng":
+        return f"eng+{indic}"
+    return "eng"
 
 
 # ---------------------------------------------------------------------------
-# Reader cache
-#
-# EasyOCR Reader construction is expensive: it loads PyTorch models into
-# memory and, on first call for a language, downloads the pretrained
-# weights. Keep one reader per language tuple, protected by a lock so a
-# burst of concurrent uploads doesn't race the constructor.
+# Limits
 # ---------------------------------------------------------------------------
-
-
-_READERS: dict[tuple[str, ...], "object"] = {}
-_READERS_LOCK = threading.Lock()
 
 _MAX_PDF_PAGES = 20
 _MAX_RASTER_PIXELS = 20_000_000
+# Cap the decompressed size of a .docx body. A 10 MB upload could otherwise
+# inflate to gigabytes ("zip bomb"); a real contract's document.xml is well
+# under 5 MB.
+_MAX_DOCX_XML_BYTES = 40 * 1024 * 1024
 
-
-def _get_reader(languages: tuple[str, ...]):
-    """Return a cached EasyOCR Reader for the given language tuple. Loads
-    (and caches) on first call. Not called at import time — deferred so
-    the module loads fast even before OCR is needed."""
-    with _READERS_LOCK:
-        if languages not in _READERS:
-            import easyocr  # noqa: WPS433 — deferred to keep module load cheap
-            logger.info(
-                "OCR: initialising EasyOCR reader for languages=%s "
-                "(first call may download ~100MB of language weights)",
-                languages,
-            )
-            _READERS[languages] = easyocr.Reader(
-                list(languages),
-                gpu=False,
-                verbose=False,
-            )
-        return _READERS[languages]
+# Below this many characters we flag is_low_quality — the source is blank,
+# garbled, or the worker uploaded the wrong file.
+_LOW_QUALITY_THRESHOLD = 80
 
 
 # ---------------------------------------------------------------------------
-# File → images
+# PDF
 # ---------------------------------------------------------------------------
-
-
-def _pdf_to_images(pdf_bytes: bytes, *, dpi: int = 200) -> list[np.ndarray]:
-    """Rasterise every page of a PDF to a numpy image array. 200 dpi
-    gives EasyOCR enough resolution to read 10pt body text cleanly
-    without ballooning memory (a typical A4 page → ~2 MB uint8 array)."""
-    import fitz  # noqa: WPS433 — PyMuPDF, imported lazily
-
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        if len(doc) > _MAX_PDF_PAGES:
-            raise ValueError(
-                f"PDF has {len(doc)} pages; the maximum is {_MAX_PDF_PAGES}"
-            )
-        pages: list[np.ndarray] = []
-        for page in doc:
-            pix = page.get_pixmap(dpi=dpi, alpha=False)
-            if pix.width * pix.height > _MAX_RASTER_PIXELS:
-                raise ValueError(
-                    "PDF page is too large to read safely; upload a lower-resolution copy"
-                )
-            # pixmap.samples is a bytes buffer; reshape into (h, w, channels).
-            arr = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
-                pix.height, pix.width, pix.n,
-            )
-            pages.append(arr)
-        return pages
-    finally:
-        doc.close()
 
 
 def _extract_pdf_text_layer(pdf_bytes: bytes) -> str:
     """Read a born-digital PDF's text layer before falling back to OCR.
 
     Most platform agreements are exported PDFs, not scans. Reading the text
-    layer is substantially faster and avoids recognition errors; scanned or
-    image-only PDFs still follow the existing EasyOCR path.
+    layer is faster and avoids recognition errors; scanned or image-only
+    PDFs fall through to the Tesseract path.
     """
     import fitz  # noqa: WPS433 — PyMuPDF, imported lazily
 
@@ -165,9 +132,40 @@ def _extract_pdf_text_layer(pdf_bytes: bytes) -> str:
         doc.close()
 
 
-def _image_to_array(image_bytes: bytes) -> np.ndarray:
-    """Decode an image blob to numpy. Converts to RGB up front so
-    palettised PNGs and single-channel greyscales normalise cleanly."""
+def _pdf_to_images(pdf_bytes: bytes, *, dpi: int = 300) -> list[Image.Image]:
+    """Rasterise every page of a PDF to a PIL image. 300 dpi gives Tesseract
+    enough resolution to read 10pt body text cleanly."""
+    import fitz  # noqa: WPS433 — PyMuPDF, imported lazily
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        if len(doc) > _MAX_PDF_PAGES:
+            raise ValueError(
+                f"PDF has {len(doc)} pages; the maximum is {_MAX_PDF_PAGES}"
+            )
+        pages: list[Image.Image] = []
+        for page in doc:
+            pix = page.get_pixmap(dpi=dpi, alpha=False)
+            if pix.width * pix.height > _MAX_RASTER_PIXELS:
+                raise ValueError(
+                    "PDF page is too large to read safely; upload a lower-resolution copy"
+                )
+            pages.append(
+                Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            )
+        return pages
+    finally:
+        doc.close()
+
+
+# ---------------------------------------------------------------------------
+# Image
+# ---------------------------------------------------------------------------
+
+
+def _load_image(image_bytes: bytes) -> Image.Image:
+    """Decode an image blob. Converts to RGB up front so palettised PNGs and
+    single-channel greyscales normalise cleanly."""
     img = Image.open(io.BytesIO(image_bytes))
     if img.width * img.height > _MAX_RASTER_PIXELS:
         raise ValueError(
@@ -175,17 +173,109 @@ def _image_to_array(image_bytes: bytes) -> np.ndarray:
         )
     if img.mode != "RGB":
         img = img.convert("RGB")
-    return np.array(img)
+    return img
+
+
+# ---------------------------------------------------------------------------
+# Tesseract
+# ---------------------------------------------------------------------------
+
+
+def _ocr_images(pages: list[Image.Image], *, lang: str) -> str:
+    """Run Tesseract over each page image and join with blank-line page
+    separators (mirrors the PDF text-layer join so Stage 1 sees the same
+    structure)."""
+    import pytesseract  # noqa: WPS433 — deferred; keeps module import cheap
+
+    out: list[str] = []
+    for page_no, img in enumerate(pages, start=1):
+        try:
+            text = pytesseract.image_to_string(img, lang=lang)
+        except pytesseract.TesseractNotFoundError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "the OCR engine (tesseract) is not installed on this host"
+            ) from exc
+        except pytesseract.TesseractError as exc:
+            # A missing traineddata file is the common case ("Failed loading
+            # language 'xxx'"). Retry on English alone rather than fail the
+            # whole document.
+            logger.warning("OCR: tesseract error on page %d (%s); retrying eng", page_no, exc)
+            try:
+                text = pytesseract.image_to_string(img, lang="eng")
+            except Exception:
+                logger.exception("OCR: page %d failed", page_no)
+                text = ""
+        if text.strip():
+            out.append(text.strip())
+    return "\n\n".join(out).strip()
+
+
+# ---------------------------------------------------------------------------
+# Plain text
+# ---------------------------------------------------------------------------
+
+
+def _decode_text(file_bytes: bytes) -> str:
+    """Decode an uploaded .txt file. Tries the encodings a worker's device
+    or a platform export realistically produces before giving up."""
+    for encoding in ("utf-8-sig", "utf-16", "utf-8", "cp1252", "latin-1"):
+        try:
+            return file_bytes.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return file_bytes.decode("utf-8", errors="replace")
+
+
+# ---------------------------------------------------------------------------
+# .docx
+# ---------------------------------------------------------------------------
+
+_DOCX_BREAK_RE = re.compile(r"<w:(?:br|cr)\b[^>]*/>")
+_DOCX_TAB_RE = re.compile(r"<w:tab\b[^>]*/>")
+_DOCX_PARA_SPLIT_RE = re.compile(r"</w:p\s*>")
+_DOCX_RUN_TEXT_RE = re.compile(r"<w:t\b[^>]*>(.*?)</w:t>", re.DOTALL)
+
+
+def _extract_docx_text(file_bytes: bytes) -> str:
+    """Pull the visible text out of a .docx without a full XML parse.
+
+    A .docx is a zip; the body is ``word/document.xml``. We normalise the
+    handful of structural tags we care about (paragraph end, line break,
+    tab) into whitespace, then lift the run text out of ``<w:t>`` elements
+    with a regex. No XML entity resolution happens, so a hostile document
+    can't trigger entity-expansion ("billion laughs") attacks, and the
+    decompressed read is bounded.
+    """
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(file_bytes))
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError("not a valid Word document") from exc
+
+    with archive:
+        if "word/document.xml" not in archive.namelist():
+            raise RuntimeError("not a valid Word document (no document body)")
+        with archive.open("word/document.xml") as handle:
+            raw = handle.read(_MAX_DOCX_XML_BYTES + 1)
+    if len(raw) > _MAX_DOCX_XML_BYTES:
+        raise RuntimeError("the Word document body is too large to read")
+
+    xml = raw.decode("utf-8", errors="replace")
+    xml = _DOCX_BREAK_RE.sub("<w:t>\n</w:t>", xml)
+    xml = _DOCX_TAB_RE.sub("<w:t>\t</w:t>", xml)
+
+    lines: list[str] = []
+    for para in _DOCX_PARA_SPLIT_RE.split(xml):
+        runs = _DOCX_RUN_TEXT_RE.findall(para)
+        if not runs:
+            continue
+        line = "".join(unescape(run) for run in runs).strip()
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-
-
-# When output text is below this length we flag is_low_quality — either
-# the source is blank, garbled, or the worker uploaded the wrong file.
-_LOW_QUALITY_THRESHOLD = 80
 
 
 def extract_text(
@@ -196,12 +286,34 @@ def extract_text(
 ) -> OCRResult:
     """Extract the text from a contract file.
 
-    source_language is a BCP-47 code from the upload form ('hi', 'bn',
-    'ta', 'te', 'kn', 'mr', 'en'). Missing or 'auto' → default to
-    English + Devanagari, which covers the majority of Indian gig-worker
-    contracts. Callers get back the extracted text and echo of the
-    source language for downstream stages.
+    ``source_language`` is a BCP-47 code from the upload form ('hi', 'bn',
+    'ta', 'te', 'kn', 'mr', 'en') or None. It only affects the OCR path —
+    text formats (txt, docx, born-digital PDF) carry their own encoding.
     """
+    mime_type = (mime_type or "").lower()
+
+    # --- text formats: no OCR needed ---
+    if mime_type == "text/plain":
+        text = _decode_text(file_bytes).strip()
+        return OCRResult(
+            text=text,
+            language=source_language or "en",
+            is_low_quality=len(text) < _LOW_QUALITY_THRESHOLD,
+        )
+
+    if mime_type == DOCX_MIME:
+        try:
+            text = _extract_docx_text(file_bytes).strip()
+        except Exception as exc:
+            logger.exception("OCR: failed to read .docx")
+            raise RuntimeError(f"could not read Word document: {exc}") from exc
+        return OCRResult(
+            text=text,
+            language=source_language or "en",
+            is_low_quality=len(text) < _LOW_QUALITY_THRESHOLD,
+        )
+
+    # --- PDF: text layer first, then OCR ---
     if mime_type == "application/pdf":
         try:
             text_layer = _extract_pdf_text_layer(file_bytes)
@@ -216,41 +328,16 @@ def extract_text(
             logger.exception("OCR: failed to read PDF")
             raise RuntimeError(f"could not read PDF: {exc}") from exc
     else:
-        # image/png, image/jpeg — the routes layer already whitelisted MIME.
-        pages = [_image_to_array(file_bytes)]
-
-    reader = _get_reader(_reader_langs_for(source_language))
+        # image/png, image/jpeg — the service layer already whitelisted MIME.
+        pages = [_load_image(file_bytes)]
 
     if not pages:
         return OCRResult(text="", language=source_language, is_low_quality=True)
 
-    all_text: list[str] = []
-    for page_no, page_img in enumerate(pages, start=1):
-        try:
-            # detail=0 → return plain text (drops bounding-box coords).
-            # paragraph=True → glue nearby boxes into paragraphs, which
-            # matches how contract text actually flows and gives Stage 1
-            # sensible clause chunks to work with.
-            lines = reader.readtext(page_img, detail=0, paragraph=True)
-        except Exception as exc:
-            logger.exception("OCR: page %d failed", page_no)
-            # Skip the failed page rather than fail the whole document —
-            # a bad page still leaves the rest usable.
-            lines = []
-        for line in lines:
-            if isinstance(line, str) and line.strip():
-                all_text.append(line.strip())
-        if len(pages) > 1 and page_no < len(pages):
-            # Page separator so Stage 1 sees the same structure the PDF
-            # had. Two blank lines is a strong-enough hint for the clause
-            # extractor without being a special token.
-            all_text.append("")
-
-    text = "\n".join(all_text).strip()
+    lang = _tesseract_lang_for(source_language)
+    text = _ocr_images(pages, lang=lang)
     return OCRResult(
         text=text,
-        # Trust the user-provided source language. If none given, echo
-        # the reader default ('hi' as most-likely non-English fallback).
-        language=(source_language or "hi"),
+        language=source_language or "en",
         is_low_quality=len(text) < _LOW_QUALITY_THRESHOLD,
     )

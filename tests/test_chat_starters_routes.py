@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text as sql_text
 
 from app.auth.routes import limiter
+from app.config import settings
 from app.db import SessionLocal
 from app.main import app
 
@@ -25,7 +26,13 @@ from app.main import app
 def client():
     with TestClient(app) as c:
         limiter.enabled = False
+        # These are regression tests for the legacy admin-configured chat
+        # implementation. Worker deployments keep it disabled by default
+        # until it is retargeted from food delivery to worker rights.
+        old_chatbot_enabled = settings.chatbot_enabled
+        settings.chatbot_enabled = True
         yield c
+        settings.chatbot_enabled = old_chatbot_enabled
         limiter.enabled = True
 
 

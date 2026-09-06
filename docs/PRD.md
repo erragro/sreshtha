@@ -14,7 +14,7 @@ v0.1 (2026-08-13) was written as a hackathon submission plan. It made three clai
 
 | v0.1 claim | v0.2 correction |
 |---|---|
-| OCR via Gemini Vision | In-house **EasyOCR** (open-source, on-prem, zero per-scan cost) since the 2026-08-15 architecture pivot. Worker documents never leave our infrastructure. |
+| OCR via Gemini Vision | In-house **Tesseract** (open-source, on-prem, zero per-scan cost, no model download, identical on x86/ARM). Worker documents never leave our infrastructure. Also accepts `.docx` and plain text, which skip OCR entirely. |
 | "Sold to gig platforms and aggregators under compliance framings" as a core channel | Aggregator revenue is a **late, carefully-bounded channel (months 18–36)**, never a funder of the advocacy features. Primary funding: philanthropic grants → state welfare-board contracts → insurance/fintech distribution. See §8 and [MONETIZATION.md](MONETIZATION.md). |
 | "Retrieval-first" chatbot with a 0.75 similarity "safety cage" | RAG is a **roadmap item, not a shipped safety control**. v1's safety guarantee is the deterministic output validator (§7.4), which runs on every response regardless of retrieval. The "cage" language has been removed. |
 | Gemini owns all reasoning + generation across every language | **Per-stage hybrid.** Stage 1 (extract) uses OpenAI `gpt-4o-mini` with Structured Outputs enforcement + gpt-4o fallback on low confidence — cheap, schema-guaranteed, fast. Stage 2 (annotate) uses OpenAI `gpt-4o` with RAG over a curated statute corpus (pgvector, HNSW, `text-embedding-3-large` @ 1024 dims via Matryoshka). Stage 3 (rewrite) uses Vertex AI Gemini 2.5 Flash with Mayura-style chunked parallelism for warmer pre-translation tone. Sarvam Mayura still owns Indic translation. Vertex Gemini remains an explicit provider swap via `LLM_PROVIDER=vertex` for the whole reasoning stack. Rationale in §7.2, per-stage detail in §7.3. |
@@ -27,19 +27,19 @@ Other v0.2 additions: a real **Legal & Regulatory Posture** section (§6), a **V
 
 ## 1. Executive summary
 
-**Sreshtha** (श्रेष्ठ / শ্রেষ্ঠ / சிரேஷ்ட — "the best") is a mobile-first web platform that helps Indian gig workers understand the contracts they signed, know the rights they hold, discover the government schemes they already qualify for, and file complaints that reach a real authority — in their own language, at literacy levels the market ignores.
+**Sreshtha** (श्रेष्ठ / শ্রেষ্ঠ / சிரேஷ்ட — "the best") is a mobile-first web platform that helps Indian gig workers understand the contracts they signed, know the rights they hold, and discover government schemes they may qualify for. Worker-language support and complaint drafting are planned capabilities, not blanket claims about the currently deployed interface.
 
 **Why this, why now.** India has ~7.7 crore gig workers today, projected to ~23.5 crore by 2030 (NITI Aayog, 2022). The Code on Social Security 2020 recognised gig workers as a distinct category and mandated welfare infrastructure; Karnataka and Rajasthan have operationalised state welfare boards funded by a cess on platform transactions. The legal scaffolding now exists. **What is missing is the worker-facing surface that turns statute into "here is what to do this afternoon."** No consolidated worker-facing product occupies this space; the closest analogue, Fairwork India, is a research and advocacy vehicle, not a product.
 
-**What we've built.** One shell, five modules, common conversational surface:
+**What is worker-ready today.** One shell with three worker-ready modules:
 
-1. **Contract Reader** *(shipped, production-quality)* — upload the contract you signed; get it explained clause-by-clause in your language, with the clauses that deserve attention flagged.
-2. **Rights Guide** *(shipped)* — 5 curated, citation-backed fact cards on minimum wage, injury, grievance escalation, e-Shram registration, and contract fairness. English canonical + Hindi, Bengali, Tamil translations via Sarvam Mayura (native-speaker review is the publication gate for translations; script and translation UI live either way).
-3. **Chatbot (Sahaayak)** *(shell live; domain retargeting in progress)* — natural-language Q&A over the Rights Guide and the worker's own documents.
-4. **Schemes Finder** *(shipped)* — a three-question wizard surfacing every central and state scheme a worker qualifies for. 10 schemes indexed with structured eligibility rules; Hindi, Bengali, Tamil descriptions live via Mayura translation.
-5. **Complaint Helper** *(data model + 5 seeded templates + escalation-ladder routing built; API + UI pending)* — draft a formal complaint in the worker's language, routed to the right authority.
+1. **Contract Reader** *(shipped, pending broader production hardening)* — upload a PDF/image contract; get a clause-by-clause explanation and risk flags. English, Hindi, and Bengali are supported output targets when the translation service succeeds.
+2. **Rights Guide** *(shipped)* — 5 curated, citation-backed English fact cards on minimum wage, injury, grievance escalation, e-Shram registration, and contract fairness. Translation publication remains gated on native-speaker review.
+3. **Schemes Finder** *(shipped)* — a three-question wizard with structured eligibility rules for 10 schemes. English is the canonical live content while reviewed translations are published.
 
-Contract Reader is the anchor. As of 2026-09-04 it runs a **per-stage hybrid reasoning pipeline**: OpenAI `gpt-4o-mini` for schema-guaranteed clause extraction (Stage 1), OpenAI `gpt-4o` for statute-annotated risk labelling with RAG over a curated statute corpus (Stage 2, in flight), and Vertex AI Gemini 2.5 Flash for the warm worker-facing rewrite (Stage 3, chunked parallel). Sarvam Mayura then translates the finished English into the worker's language with a curated idiom library and four tone registers. The pipeline exceeds the original v1 scope and is the artefact that carries the demo.
+**Not worker-exposed yet.** Sahaayak is disabled because the inherited Cardinal prompts and taxonomy are for food-delivery customer support, not worker rights. Complaint Helper has templates and a data migration, but no worker API or UI. Neither belongs in the navigation or in launch claims.
+
+Contract Reader is the anchor. Extraction and risk annotation explicitly use OpenAI; the worker-facing rewrite follows `LLM_PROVIDER` (OpenAI by default, with Vertex available when configured). Sarvam Mayura translates completed English explanations, with the idiom library preserving known legal idioms. A Stage 3 failure marks the contract failed rather than presenting fallback errors as a completed analysis.
 
 **The mission-aligned business model.** Workers never pay for contract analysis, rights content, or complaint drafting. The platform is funded by parties who are already paying to reach or serve this workforce: philanthropic and CSR grants first, then state welfare-board integration contracts, then regulated insurance and fintech distribution. Aggregator money, if taken at all, comes late and never touches complaint routing. Full model and unit economics in [MONETIZATION.md](MONETIZATION.md).
 
@@ -150,7 +150,7 @@ No consolidated worker-facing product exists.
 
 Sreshtha treats these as separate settings; conflating them creates mixed-language, unsafe experiences.
 
-- **Worker locale** controls every fixed worker-facing interface string: onboarding, navigation, upload instructions, consent, processing status, risk labels, errors, safety notices, Labourline prompts, download controls, and accessibility labels. It is selected at onboarding, can be changed in settings, and is persisted across modules. The reviewed v1 locales are Hindi, Bengali, and English.
+- **Worker locale** is the target architecture, not yet a live global setting. The current fixed interface and Rights/Schemes content are English. Reviewed Hindi, Bengali, and English message catalogs are a launch prerequisite for claiming a multilingual app.
 - **Document source language** is declared or detected at upload. It guides OCR and clause extraction only; it never changes the app interface language.
 - **Module output language** defaults to the worker locale but is constrained by the module's reviewed-content availability. Contract Reader v1 permits Hindi, Bengali, and English. Rights Guide and Schemes Finder may expose Tamil only when the relevant translated content has passed native-speaker review.
 - **Fallback is explicit.** When a requested translation is unavailable or still in review, the interface says that the original English content is being shown; it never silently mixes languages or labels English as translated content.
@@ -160,32 +160,32 @@ Sreshtha treats these as separate settings; conflating them creates mixed-langua
 
 ## 5. Solution overview
 
-One shell, five modules, one account, one chatbot.
+One shell, three worker-ready modules, one account. The legacy chatbot and Complaint Helper remain development work.
 
 ### 5.1 The shell (built, from the QuickBites substrate, rebranded)
 
 - **Auth** — email + password today; **OTP-first with recovery** before public launch.
-- **Sessions** — chat sessions with title, history, rename, delete.
+- **Sessions** — legacy chat-session persistence retained for the future Sahaayak rebuild; not exposed to workers while the chatbot is disabled.
 - **Module registry** — modules registered by super-admin, gated per user and per tenant.
 - **Tenant infrastructure** — `tenants` + `tenant_memberships` tables (migration 012) with a scripted onboarding path (`scripts/bootstrap_tenant.py`). Every content row already carries a nullable `tenant_id` (null = shared library); welfare boards and unions can be provisioned as first-class tenants with their own admin owner in one command.
-- **Tenant configuration** — business units, issue types, response templates, admin-editable ("Conversation Studio").
-- **Chat pipeline** — Cardinal-inspired synchronous phases with a deterministic rule-enforcement stage.
+- **Tenant configuration** — legacy business units, issue types, and response templates retained for the Sahaayak rebuild.
+- **Chat pipeline** — inherited Cardinal pipeline; disabled pending full worker-rights retargeting and end-to-end validation.
 - **LLM abstraction** — `LLMProvider` protocol with `chat(role, system, user, schema=…)` and `chat_stream()` methods. Two concrete providers: `OpenAIProvider` (chat completions via HTTPS, engages Structured Outputs when a JSON schema is passed) and `VertexAIProvider` (google-genai SDK, `response_schema` for structured mode). Selection at call site via `get_provider(language, provider="openai" | "vertex")`, or globally via the `LLM_PROVIDER` env selector (default `openai`; `vertex` is the explicit swap for the entire reasoning stack). AI Studio bare-key access was removed after Google blocked the key path.
 - **Admin panel** — user + access matrix, module + tone-spec editing.
 
 ### 5.2 The five modules
 
-| # | Module | v1 scope (public launch) | Status (2026-09-04) |
+| # | Module | Scope | Current status |
 |---|---|---|---|
-| 1 | **Contract Reader** | Upload PDF/image ≤10MB → EasyOCR → per-stage hybrid reasoning (OpenAI mini extract → OpenAI + RAG annotate → Vertex Gemini rewrite, chunked parallel) → Mayura translation with idiom library + tone register; 3 pre-loaded sample contracts; "ask about this clause" hook | **Shipped.** Exceeds original scope. Language surface for v1 tightened to Hindi + Bengali + English per the §0 correction; other Indic languages preserved in schema and re-enable post-launch. |
-| 2 | **Rights Guide** | Curated statute-cited fact cards; each card = plain-language summary + citation + procedural action steps + Labourline escalation; publication guarded by an 8-rule content-safety spec ([RIGHTS_GUIDE_CONTENT_GUIDELINES.md](RIGHTS_GUIDE_CONTENT_GUIDELINES.md)) | **Shipped v0.1.** 5 fact cards seeded (minimum wage, injury on the job, grievance escalation, e-Shram registration, contract fairness). English canonical `is_active=true`; Hindi + Bengali + Tamil rendered via Mayura + idiom library (`scripts/translate_rights_guide.py`), publication-gated on native-speaker review per card × language. UI falls back to English when a language is in review. Expansion to 15 cards is a content-authoring track, not a code track. |
-| 3 | **Chatbot (Sahaayak)** | Retargeted Cardinal pipeline; retrieval over Rights Guide + user documents *(roadmap)*; LLM answer with a not-verified disclaimer + deterministic output validator (§7.4) + no-shot rule library on every response; language auto-detect | Shell live; domain retargeting (prompts, Stage-2 rules, persona, disclaimer, no-shot rules) in progress; RAG scoped to Stage 2 first, chatbot RAG follows. |
-| 4 | **Schemes Finder** | 3-question wizard (state / occupation / demographics) → matched schemes with eligibility rules JSON, documents, apply-link | **Shipped.** 10 schemes indexed and matched via Python (`app/schemes/service.py`) against a `WorkerProfile` — no LLM in the match path. Includes e-Shram, PMSBY, PMJJBY, PMJAY, PMSYM, APY, SSY, PDS, Karnataka welfare fund, Rajasthan welfare board. English canonical + HI/BN/TA descriptions via Mayura (`scripts/translate_schemes.py`). |
-| 5 | **Complaint Helper** | Topic picker → template fill (voice/text) → worker-language + English output → routed to the right authority; copy / WhatsApp share / PDF | Data model + migration + 5 seeded templates (wage theft, injury, dismissal, harassment, insurance) with escalation-ladder routing built (migration 011). Service layer, API, and frontend pending. |
+| 1 | **Contract Reader** | Upload PDF / `.docx` / text / image ≤10MB → text-layer or Tesseract OCR → configured LLM extraction, annotation, and rewrite → Mayura translation (clauses + overview) with idiom handling | **Worker-ready after the provider and OCR fixes in this release.** HI/BN/EN output; global UI localisation remains pending. |
+| 2 | **Rights Guide** | Curated statute-cited fact cards with action steps and Labourline escalation | **Shipped v0.1 in English.** Translations must pass native-speaker review before being labelled live. |
+| 3 | **Schemes Finder** | 3-question wizard → structured eligibility matching, documents, apply-link | **Shipped in English.** Ten schemes are matched in Python without an LLM. |
+| 4 | **Chatbot (Sahaayak)** | Future worker-rights Q&A and retrieval | **Disabled.** Legacy food-delivery prompts/taxonomy must be replaced and validated first. |
+| 5 | **Complaint Helper** | Future topic picker, template fill, authority routing, copy/share/PDF | **Planned.** Templates/data exist; service/API/frontend do not. |
 
 ### 5.3 Honest status summary
 
-**Three of the five modules are shipped or shipped-with-a-content-gate.** Contract Reader (anchor, production-quality); Rights Guide (5 fact cards live, English canonical, translations gated on native-speaker review); Schemes Finder (10 schemes with the Python matcher live). Chatbot Sahaayak needs domain retargeting, not building. Complaint Helper needs the service + UI on top of a built data model. Voice (Sarvam ASR/TTS), Stage-2 RAG over the statute corpus, the `clause_rules` no-shot guide, OTP-with-recovery, offline service worker, and Cloud Run deploy under the Sreshtha brand are pending — all funded, none launch-blocking for a controlled first pilot. A funder should read the product as "anchor proven, platform scaffolded, three of five modules live, content and distribution are the work ahead" — which is exactly what grant capital funds.
+**Three worker modules are available:** Contract Reader, Rights Guide, and Schemes Finder. The app must not claim a live chatbot, Complaint Helper, voice input, or universally multilingual interface until those surfaces are built and validated. Voice, global localisation, chatbot retargeting, Complaint Helper, OTP-with-recovery, offline support, and production observability remain planned work.
 
 ---
 
@@ -218,7 +218,7 @@ This is the section a funder's diligence will probe hardest. Treating it as a di
 - **Consent** collected at upload, purpose-limited to processing that document for that worker.
 - **Data minimisation** — no document content used for model training; no cross-worker data compilation; no sale of data even anonymised (a bright line, [MONETIZATION.md](MONETIZATION.md) §2).
 - **Worker-owned** — one-tap deletion; one-tap export.
-- **On-prem OCR** — EasyOCR runs on Sreshtha infrastructure, so raw contract images never transit a third-party vision API.
+- **On-prem OCR** — Tesseract runs on Sreshtha infrastructure, so raw contract images never transit a third-party vision API.
 - Storage-at-rest encryption; access logging; a published privacy notice in all supported languages.
 
 ### 6.5 Liability containment
@@ -255,26 +255,25 @@ FastAPI backend
               + RAG over statute corpus    │
               (pgvector HNSW, text-        │
               embedding-3-large @ 1024)    │
-     Stage 3  Vertex AI Gemini 2.5 Flash   │
-              (chunked parallel, Mayura-   │
-              style boundary tokens)       │
+     Stage 3  configured LLM (OpenAI by    │
+              default; chunked parallel)   │
                                            │
-   Cardinal chat pipeline (default):       │
-     OpenAI (LLM_PROVIDER=vertex swap)     │
+   Cardinal chat pipeline:                 │
+     disabled until worker-rights rebuild  │
                                            │
    Sarvam Mayura v1 (all Indic translation)│
    Sarvam Transliteration (Roman↔native)   │
-   EasyOCR (on-prem, per-language readers) │
+   Tesseract (on-prem, eng + Indic langs) │
    Sarvam ASR/TTS (roadmap)                │
 ```
 
-The whole reasoning stack sits behind a single `LLMProvider` protocol. Each stage explicitly names its provider at the call site (`get_provider(provider="openai")` or `get_provider(provider="vertex")`), so a change of provider for any one stage is a one-line edit and never leaks into another. The `LLM_PROVIDER` env var is a global fallback selector when a call site doesn't specify.
+The reasoning stack sits behind a single `LLMProvider` protocol. Extraction and annotation explicitly use OpenAI; Stage 3 follows `LLM_PROVIDER` (OpenAI by default, with `vertex` only when Google credentials are configured). Sarvam Mayura remains the translation provider.
 
 ### 7.2 Key design decisions
 
 **Deterministic where it matters.** Scheme matching, complaint routing, statute references, and template filling are Python. LLMs do three things: language detection, clause understanding on uploaded contracts, and warm chat prose when there is no library answer. Nothing binding is generated, and the output sanitiser (§6.2) is the backstop.
 
-**Per-stage hybrid reasoning.** (Pivot 2026-09-04 after ML research on structured-output accuracy, RAG-for-legal-domain retrieval quality, and per-provider tone quality.) Each stage in Contract Reader runs on the provider best suited to its task, all sharing one `LLMProvider` protocol:
+**Consistent default provider.** Extraction and annotation explicitly use OpenAI, and Stage 3 now defaults to OpenAI through `LLM_PROVIDER`. This avoids a successful extraction/annotation followed by a rewrite failure because an unconfigured Vertex provider was hard-coded only for Stage 3.
 
 - **Stage 1 (Extract)** — OpenAI `gpt-4o-mini` with **Structured Outputs** (`response_format=json_schema`, `strict: true`). Schema-guaranteed JSON eliminates parse failures. Structured extraction is a shape-imposition task where mini is at effective parity with 4o at ~15× lower cost (~$0.0015/contract vs ~$0.025). A confidence-gate fallback retries on gpt-4o if the model returns `confidence < 0.4` or zero clauses.
 - **Stage 2 (Annotate)** — OpenAI `gpt-4o` grounded by **RAG over a curated statute corpus** (the Code on Social Security 2020, Karnataka Platform Gig Workers Ordinance 2024, Rajasthan Platform Gig Workers Act 2023, Central Motor Vehicles Rules 2024 amendment, POSH Act 2013). Retrieval index is `pgvector` HNSW over `text-embedding-3-large` embeddings reduced to 1024 dimensions via Matryoshka Representation Learning — the highest-quality legal-domain OpenAI embedding at storage cost lower than the small model. A cosine-similarity threshold of ~0.75 gates retrieval; below threshold, the annotator emits `citation: null` rather than inventing a section number.
@@ -299,7 +298,7 @@ The library is chosen over few-shot exemplars because (a) legal reasoning is nat
 
 **Contract Reader output language: Hindi + Bengali + English for v1.** (New in v0.2.) Contract Reader renders worker-facing analysis in three languages only for the first release: Hindi (broadest reach), Bengali (migrant workforce across Delhi NCR, Bangalore, Mumbai per persona §3.2), and English (fallback for the reviewer and for bilingual contracts). The app chrome follows the worker locale defined in §4.3; source-contract language remains an OCR/extraction concern. Tamil, Telugu, Kannada, Marathi remain fully in the schema, in the `TargetLanguage` type, and in Rights Guide / Schemes / Complaint Helper — the constraint is Contract Reader-specific and is lifted per language when (a) the idiom library covers ≥100 entries for that language and (b) the fact-card corpus for that language completes native-speaker review. This is a quality-preserving scope tightening, not a strategic retreat.
 
-**On-prem OCR.** EasyOCR + PyMuPDF, cached readers per language pair, English always bundled for bilingual contracts. Zero per-scan cost, no vendor dependency, worker documents stay on our infrastructure. **Known limitation:** first upload per language pair pays a ~10–15 s model-load cost (surfaced to the worker as a one-line notice); an image-preprocessing pass (deskew, adaptive threshold for phone-camera photos) is a near-term hardening item.
+**On-prem OCR.** Tesseract + PyMuPDF; the tesseract binary and the `eng hin ben tam tel kan mar` language data ship in the image, so there is no model download and behaviour is identical on x86 and ARM. `eng` is always included for bilingual contracts. Zero per-scan cost, no vendor dependency, worker documents stay on our infrastructure. Born-digital PDFs, `.docx`, and plain text bypass OCR. **Known limitation:** an image-preprocessing pass (deskew, adaptive threshold for phone-camera photos) is a near-term hardening item; low-quality photos in rare scripts may still need a cloud vision fallback.
 
 **Contract processing is asynchronous.** Upload returns immediately; a background task advances the document through a committed status machine (`uploaded → ocr → stage1 → stage2 → stage3 → translated → ready`), and the viewer renders each stage's output as it lands. A worker on 3G sees OCR text within seconds and a progressively hydrating explanation, not a 40-second spinner. This is why multi-stage LLM latency is a UX detail here, not a blocker.
 
@@ -335,7 +334,7 @@ Contract-type-aware reasoning is built into the system prompt: aggregator contra
 
 **RAG plumbing** (planned): each batch of 5 clauses embeds a query concatenating clause text + heading, retrieves top-5 statute chunks by cosine similarity ≥ 0.75 from the `embeddings` table (pgvector HNSW), injects the retrieved chunks into the user message with source URLs, and instructs the annotator to cite what it retrieved (or set `citation` all-null if nothing meets threshold). A failed Stage 2 falls back to Stage-1-only output ("here is what the contract says; we could not cross-check the law today").
 
-**Stage 3 — Rewrite (Vertex Gemini + chunked parallel)**
+**Stage 3 — Rewrite (configured provider + chunked parallel)**
 
 Produces the worker-facing English rendition, which Mayura then translates. Per clause:
 - `explanation` — plain-language rewrite of the clause (2–3 sentences)
@@ -346,11 +345,11 @@ Plus a top-level `overview`:
 - `top_summary` — 1–2-sentence English framing of the contract as a whole
 - `top_actions[]` — 1–3 highest-priority procedural actions from the red-tier clauses
 
-**Chunked parallelism (Mayura-style):** clauses split into chunks of 5 (`_STAGE3_CHUNK_SIZE`) and run through `get_provider(provider="vertex")` in a `ThreadPoolExecutor` capped at 6 workers. Per-chunk render then a single small aggregation call generates the `overview` from the whole rendered set — so overview actions aren't chunk-local. A 30-clause contract completes Stage 3 in ~4–5 s instead of ~15 s sequential. The prompt is split into `_SYSTEM_RENDER_ONLY` (per-clause) and `_SYSTEM_OVERVIEW_ONLY` (aggregation) so each call carries only the rules it needs.
+**Chunked parallelism:** clauses split into chunks of 5 (`_STAGE3_CHUNK_SIZE`) and run through the configured provider in a `ThreadPoolExecutor` capped at 6 workers. Per-chunk render then a single small aggregation call generates the `overview` from the whole rendered set — so overview actions aren't chunk-local. The prompt is split into `_SYSTEM_RENDER_ONLY` (per-clause) and `_SYSTEM_OVERVIEW_ONLY` (aggregation) so each call carries only the rules it needs.
 
 Once Stage 3 emits, Mayura translates the finished English into the worker's target language + tone register, with the idiom-library substitute/restore sandwich preserving legal-idiom fidelity through the translator call (§7.5 in [DESIGN.md](DESIGN.md)).
 
-**Latency budget for a real 30-clause contract:** OCR ~5–10 s → Stage 1 mini ~3–6 s → Stage 2 (6 parallel gpt-4o calls) ~8–12 s → Stage 3 (6 parallel Gemini + 1 overview) ~4–5 s → Mayura chunked translation ~15–25 s. Total ~35–58 s end-to-end. The worker sees OCR text within seconds and each stage's output as it lands — this is why the multi-stage latency is a UX detail rather than a blocker.
+**Latency needs production measurement.** The UI should show processing state and only mark a contract ready after Stage 3 returns usable rendered clauses. Provider and OCR errors must be recorded to stdout and surfaced as a retryable worker message rather than translated as clause content.
 
 ### 7.4 The deterministic output validator + no-shot rule library
 
@@ -432,7 +431,7 @@ The corpus for migration 013's initial seed is the Code on Social Security 2020,
 | 5 | Union white-label + member subscriptions | Months 9–30 | Distribution partner as much as customer; each deal brings a member base. |
 | 6 | Direct-to-worker paid tiers (pay-per-use, credits, Pro ₹99/mo) | Month 12+ | Humane caps; safety-critical drafts always free and uncapped; the app that never took from workers when they most needed it gets to take a little when they can give. |
 
-**The chatbot cost trap is designed for, not ignored.** Every worker turn is a metered Gemini + Mayura call; at 5M users an uncontained chatbot is a ₹230 cr/year line. Containment: retrieval-first architecture + a soft 10-LLM-turn/month free-tier cap (retrieval answers unlimited) + curated sponsored placements from an allowlist (never on the Contract Reader, never inside a complaint body). Under this combination the chatbot stays under ₹15/user/month even at 5M users. Full analysis: [MONETIZATION.md](MONETIZATION.md) §6–§7.
+**Chatbot economics are deferred.** Sahaayak is disabled until it has worker-rights prompts, source material, safety controls, and end-to-end tests. Cost projections are not a substitute for a working worker-facing feature.
 
 **Unit economics at maturity:** ~₹40–90/user/year fully-loaded cost; ₹150–400/user/year blended revenue; 60–80% contribution margin, driven by welfare boards and unions doing distribution for free. *[All directional; validate per counterparty before quoting.]*
 
@@ -641,7 +640,8 @@ A running log of the architectural pivots taken during build. Each row states wh
 
 | Date | Decision | Reason | Reversal condition |
 |---|---|---|---|
-| 2026-08-15 | On-prem OCR (EasyOCR + PyMuPDF) replaces Gemini Vision | Zero per-scan cost + worker documents never leave our infrastructure + a path to India-specific fine-tuning | Rare-script quality falls below acceptable and the funded plan can't cover the OCR-tuning line item |
+| 2026-08-15 | On-prem OCR replaces Gemini Vision | Zero per-scan cost + worker documents never leave our infrastructure | Rare-script quality falls below acceptable |
+| 2026-09-06 | Tesseract replaces the EasyOCR/torch stack | EasyOCR produced garbled output on the ARM64 build and pulled ~1 GB of wheels + runtime model downloads; Tesseract is a small C++ binary with prebuilt Indic language data | Rare-script accuracy needs a cloud vision fallback |
 | 2026-08-15 | Gemini owns reasoning, Sarvam Mayura owns translation | Simpler tone control from one reasoning provider; Sarvam Mayura best-in-class for Indic register control | Superseded 2026-09-04 by the per-stage hybrid |
 | 2026-08-19 | Idiom substitute/restore sandwich (`app/translate/idioms.py`) wraps every Mayura call | Legal idioms literalise catastrophically ("at the end of the day" → 11:59 pm); a curated library preserves fidelity through a general-purpose translator | Never — this is a compounding moat |
 | 2026-08-22 | Chunked Mayura translation with boundary tokens (`[[ROW_n]]`, `[[FLD]]`) | 94-clause contract went from ~11 min sequential to ~30 s batched | Never — this is a hard rate-limit constraint |

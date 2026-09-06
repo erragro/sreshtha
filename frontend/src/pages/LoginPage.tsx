@@ -20,14 +20,14 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const login = useLogin()
 
-  if (token) return <Navigate to="/chat" replace />
+  if (token) return <Navigate to="/" replace />
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
     try {
       await login.mutateAsync({ email: email.trim(), password })
-      const returnTo = (loc.state as { from?: string })?.from ?? "/chat"
+      const returnTo = (loc.state as { from?: string })?.from ?? "/"
       nav(returnTo)
     } catch (err) {
       setError(humaniseError(err, "Could not sign in"))

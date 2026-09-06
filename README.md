@@ -2,10 +2,11 @@
 
 **An app for India's gig workers.**
 
-Contract explanations, rights guidance, and welfare access, in the
-languages workers actually speak. Built on Google Gemini 2.5 Flash
-(Vertex AI, `asia-south1`), Sarvam Mayura for Indic translation, and an
-in-house Indic vision stack.
+Contract explanations, rights guidance, and welfare access for India's gig
+workers. The Contract Reader accepts PDF, Word (`.docx`), plain text, and
+photos/scans (JPG/PNG); it uses OpenAI by default (Vertex AI is an optional
+operator-selected provider), Sarvam Mayura for Indic translation, and local
+Tesseract OCR for photos and scanned PDFs.
 
 Blog: [erragro.github.io/sreshtha-blog](https://erragro.github.io/sreshtha-blog/) ·
 License: [proprietary — all rights reserved](LICENSE), © 2026 Surajit Chaudhuri.
@@ -53,12 +54,13 @@ docker compose down -v
 | Contract Reader   | Live   | `app/contracts/`       | `frontend/src/pages/Contract*`    |
 | Rights Guide      | Live   | `app/rights/`          | `frontend/src/pages/RightsGuide*` |
 | Schemes Finder    | Live   | `app/schemes/`         | `frontend/src/pages/Schemes*`     |
-| Complaint Helper  | In flight | `app/complaints/`   | `frontend/src/pages/Complaint*`   |
-| Chatbot Sahaayak  | Retargeting from the Cardinal chat pipeline | `app/l1_cardinal/`, `app/l2_agents/`, `app/sessions/`, `app/chat/` | `frontend/src/pages/ChatPage.tsx` |
+| Complaint Helper  | Planned — not exposed to workers | Content migrations only | No worker route yet |
+| Chatbot Sahaayak  | Disabled pending worker-rights retargeting | Legacy Cardinal code retained for refactoring | No worker route while disabled |
 
-Every module speaks seven Indic languages (Hindi, Bengali, Tamil,
-Telugu, Kannada, Marathi, English) with four tone modes on
-worker-facing surfaces.
+The live worker interface and Rights/Schemes content currently use English.
+Contract Reader supports English, Hindi, and Bengali output when the selected
+translation is available; additional reviewed translations and voice input are
+roadmap work, not live features.
 
 ## Repository layout
 
@@ -66,16 +68,15 @@ worker-facing surfaces.
 sreshtha/
 ├── app/                          FastAPI backend
 │   ├── auth/                     Users, JWT, password hashing
-│   ├── contracts/                Contract Reader — OCR + 3-stage Gemini + Mayura
+│   ├── contracts/                Contract Reader — OCR + 3-stage LLM + Mayura
 │   ├── rights/                   Rights Guide — fact-card API
 │   ├── schemes/                  Schemes Finder — wizard + eligibility matcher
-│   ├── complaints/               Complaint Helper — templates + render
 │   ├── idioms/                   Idiom library admin
 │   ├── translate/                Sarvam Mayura translation, idiom sandwich
 │   ├── modules/                  Module registry + per-user ACL
 │   ├── sessions/                 Chat session CRUD
-│   ├── l1_cardinal/              5-phase chatbot pipeline (retargeting for Sahaayak)
-│   ├── l2_agents/                Stage-2 evaluators (retargeting for Sahaayak)
+│   ├── l1_cardinal/              Legacy chatbot pipeline (not worker-exposed)
+│   ├── l2_agents/                Legacy chatbot evaluators (awaiting retargeting)
 │   ├── conversation_studio/      Admin surface for chat taxonomy + templates
 │   ├── db.py, models.py          SQLAlchemy 2 async session + all ORM models
 │   ├── main.py                   FastAPI app entrypoint
@@ -96,10 +97,10 @@ worker upload → POST /api/contracts
         ├─► app/contracts/storage.py         local disk (Cloud Storage on prod)
         ├─► app/contracts/processor.py       status machine + orchestration
         │       │
-        │       ├─► app/contracts/ocr.py     EasyOCR per language, in-house
-        │       ├─► app/contracts/stage1.py  Gemini · extract clauses      (English)
-        │       ├─► app/contracts/stage2.py  Gemini · annotate + risk tier (English)
-        │       ├─► app/contracts/stage3.py  Gemini · rewrite for worker   (English)
+        │       ├─► app/contracts/ocr.py     text layer / .docx / Tesseract OCR
+        │       ├─► app/contracts/stage1.py  configured LLM · extract clauses
+        │       ├─► app/contracts/stage2.py  configured LLM · annotate + risk tier
+        │       ├─► app/contracts/stage3.py  configured LLM · rewrite for worker
         │       └─► app/contracts/translate.py  Sarvam Mayura, chunked
         │              │
         │              ├─► app/translate/idioms.py   substitute BEFORE Mayura
@@ -168,7 +169,7 @@ sign-off requires the checklist in
 |----------------|---------|
 | Cloud Run | Production deploy of API + built frontend |
 | Cloud Storage | Encrypted at-rest storage of uploaded contracts |
-| Gemini Vision | Fallback OCR for low-quality photos in rare scripts |
+| Gemini Vision | Fallback OCR for low-quality photos in rare scripts (Tesseract is the current engine) |
 
 ## Multi-tenant deployment (for partners)
 

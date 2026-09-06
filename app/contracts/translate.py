@@ -191,6 +191,51 @@ def translate_stage_3(
     return [translated_by_id.get(p.clause_id, _english_fallback(p)) for p in payloads]
 
 
+def translate_overview(
+    overview: dict[str, Any] | None,
+    *,
+    target_language: str,
+    mode: str = "formal",
+) -> dict[str, Any] | None:
+    """Translate the Stage 3 overview (``top_summary`` + ``top_actions``).
+
+    Best-effort and self-contained: any field that fails to translate is
+    kept in English rather than aborting. Returns None when there is
+    nothing to translate so the caller can skip persisting it.
+    """
+    if not overview:
+        return None
+    if target_language == "en" or not is_supported(target_language):
+        return None
+    if not settings.sarvam_api_key:
+        return None
+
+    summary = str(overview.get("top_summary") or "").strip()
+    actions = [str(a).strip() for a in (overview.get("top_actions") or []) if str(a).strip()]
+    if not summary and not actions:
+        return None
+
+    out: dict[str, Any] = {"top_summary": summary or None, "top_actions": []}
+
+    if summary:
+        try:
+            out["top_summary"] = _translate_single(summary, target_language, mode=mode)
+        except Exception:
+            logger.exception("translate: overview summary failed; keeping English")
+
+    translated_actions: list[str] = []
+    for action in actions:
+        try:
+            translated_actions.append(
+                _translate_single(action, target_language, mode=mode)
+            )
+        except Exception:
+            logger.exception("translate: overview action failed; keeping English")
+            translated_actions.append(action)
+    out["top_actions"] = translated_actions
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Row canonicalisation
 # ---------------------------------------------------------------------------

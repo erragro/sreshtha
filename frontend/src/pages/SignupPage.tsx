@@ -32,7 +32,7 @@ export function SignupPage() {
   const [error, setError] = useState<string | null>(null)
   const signup = useSignup()
 
-  if (token) return <Navigate to="/chat" replace />
+  if (token) return <Navigate to="/" replace />
 
   const problems = passwordProblems(password)
   const canSubmit =
@@ -45,7 +45,7 @@ export function SignupPage() {
     setError(null)
     try {
       await signup.mutateAsync({ email: email.trim(), password })
-      nav("/chat")
+      nav("/")
     } catch (err) {
       setError(humaniseError(err, "Could not create account"))
     }

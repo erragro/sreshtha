@@ -118,7 +118,12 @@ def process_contract(db: Session, contract_id: uuid.UUID) -> None:
         return
 
     if not ocr_result.text:
-        _fail(db, contract, "OCR returned no text — try a clearer photo")
+        _fail(
+            db,
+            contract,
+            "We couldn't read any text from this file. If it's a photo or scan, "
+            "try a clearer, well-lit copy; otherwise check you uploaded the right file.",
+        )
         return
 
     contract.ocr_text = ocr_result.text
@@ -215,10 +220,18 @@ def process_contract(db: Session, contract_id: uuid.UUID) -> None:
             for row in translated:
                 row.pop("translation_fallback", None)
             all_rows_fell_back = len(fallback_clause_ids) == len(translated)
+            # The overview (top_summary + top_actions) sits at the very top
+            # of the worker's view — translate it too, best-effort.
+            translated_overview = translate_mod.translate_overview(
+                stage_3_out.get("overview"),
+                target_language=target,
+                mode=mode,
+            )
             stage_3_out["translation"] = {
                 "language": target,
                 "mode": mode,
                 "rendered": None if all_rows_fell_back else translated,
+                "overview": translated_overview,
                 "translator": "sarvam/mayura:v1",
                 "fallback_clause_ids": fallback_clause_ids,
                 "error": (
