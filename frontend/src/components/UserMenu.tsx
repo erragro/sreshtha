@@ -53,7 +53,7 @@ export function UserMenu() {
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onSelect={() => logout()}
+          onClick={() => logout()}
           className="text-destructive focus:text-destructive"
         >
           <LogOut className="size-4" />
