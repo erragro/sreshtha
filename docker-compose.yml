@@ -42,6 +42,10 @@ services:
     build: ./frontend
     depends_on:
       - app
+    environment:
+      # nginx.conf is a Cloud Run runtime template (proxy_pass ${API_UPSTREAM}).
+      # For the compose network the API is reachable at the service name.
+      API_UPSTREAM: http://app:8000
     ports:
       # Frontend published on :5173 by default. If port 5173 is occupied
       # (e.g. `vite dev` from another repo), override via .env:
